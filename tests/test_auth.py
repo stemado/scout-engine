@@ -109,7 +109,6 @@ async def test_legacy_key_still_works(client, monkeypatch):
     assert resp.status_code == 200
 
 
-@pytest.mark.xfail(reason="Route /api/auth/invites not yet implemented (Task 5)")
 async def test_legacy_key_has_admin_access(client, monkeypatch):
     """Legacy key should be treated as admin (can create invites during migration)."""
     monkeypatch.setattr(settings, "api_key", "legacy-secret")

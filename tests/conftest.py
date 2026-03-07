@@ -19,7 +19,13 @@ async def test_db():
     - ``get_session_factory`` for background tasks
     - ``app.database.async_session`` for auth middleware (which can't use Depends)
     """
-    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    # Use AUTOCOMMIT to avoid transaction interleaving between fire-and-forget
+    # tasks (e.g. _touch_last_used) and endpoint sessions on the single
+    # StaticPool connection that SQLite in-memory uses.
+    engine = create_async_engine(
+        "sqlite+aiosqlite:///:memory:",
+        isolation_level="AUTOCOMMIT",
+    )
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
