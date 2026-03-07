@@ -2,19 +2,19 @@
 
 **Date:** 2026-03-07
 **Status:** Approved
-**Goal:** Connect the Otto plugin to a remote otto-engine server for workflow deployment, execution, and scheduling
+**Goal:** Connect the Scout plugin to a remote scout-engine server for workflow deployment, execution, and scheduling
 
 ## Context
 
-otto-engine is now deployed on a Hetzner VPS with API key auth, PostgreSQL, and TLS. The Otto plugin can author and export workflows locally but has no way to deploy them to the remote server, trigger executions, monitor results, or manage schedules. Two commands (`/attach` and `/resume`) already talk to otto-engine for Hot Takeover, but they use inline httpx calls with no shared infrastructure.
+scout-engine is now deployed on a Hetzner VPS with API key auth, PostgreSQL, and TLS. The Scout plugin can author and export workflows locally but has no way to deploy them to the remote server, trigger executions, monitor results, or manage schedules. Two commands (`/attach` and `/resume`) already talk to scout-engine for Hot Takeover, but they use inline httpx calls with no shared infrastructure.
 
 ## Architecture
 
 ```
-┌─ Otto Plugin (Claude Code) ──────────────────────┐
+┌─ Scout Plugin (Claude Code) ─────────────────────┐
 │                                                   │
-│  EngineClient (src/otto/engine.py)                │
-│  ├── Config: .claude/otto.local.md → env vars     │
+│  EngineClient (src/scout/engine.py)               │
+│  ├── Config: .claude/scout.local.md → env vars    │
 │  ├── Auth: Bearer token on every request          │
 │  └── Methods: sync, run, status, schedule, ...    │
 │                                                   │
@@ -30,7 +30,7 @@ otto-engine is now deployed on a Hetzner VPS with API key auth, PostgreSQL, and 
 └──────────────────┬────────────────────────────────┘
                    │ HTTPS + Bearer token
 ┌──────────────────▼────────────────────────────────┐
-│  otto-engine (Hetzner VPS)                        │
+│  scout-engine (Hetzner VPS)                       │
 │  POST /api/workflows — upload                     │
 │  POST /api/workflows/{id}/run — execute           │
 │  GET  /api/executions — list                      │
@@ -42,15 +42,15 @@ otto-engine is now deployed on a Hetzner VPS with API key auth, PostgreSQL, and 
 └───────────────────────────────────────────────────┘
 ```
 
-## Component 1: EngineClient (`src/otto/engine.py`)
+## Component 1: EngineClient (`src/scout/engine.py`)
 
-A thin async wrapper around the otto-engine REST API.
+A thin async wrapper around the scout-engine REST API.
 
 ```python
 class EngineClient:
     # Config discovery order:
-    # 1. .claude/otto.local.md YAML frontmatter
-    # 2. OTTO_ENGINE_URL / OTTO_ENGINE_API_KEY env vars
+    # 1. .claude/scout.local.md YAML frontmatter
+    # 2. SCOUT_ENGINE_URL / SCOUT_ENGINE_API_KEY env vars
     # 3. Default: http://localhost:8000, no key
 
     async def health() -> dict
@@ -66,7 +66,7 @@ class EngineClient:
 ```
 
 **Error handling:**
-- `httpx.ConnectError` → "Cannot reach otto-engine at {url}. Is the server running?"
+- `httpx.ConnectError` → "Cannot reach scout-engine at {url}. Is the server running?"
 - 401/403 → "API key rejected. Run `/connect` to reconfigure."
 - Self-signed TLS: disable cert verification when URL is an IP address
 
@@ -78,10 +78,10 @@ class EngineClient:
 1. Ask for engine URL (or accept as argument)
 2. Ask for API key (or accept as argument)
 3. Test connection with health check
-4. Save to `.claude/otto.local.md`
-5. Confirm: "Connected to otto-engine at https://X.X.X.X (v0.1.0)"
+4. Save to `.claude/scout.local.md`
+5. Confirm: "Connected to scout-engine at https://X.X.X.X (v0.1.0)"
 
-**Config file** (`.claude/otto.local.md`):
+**Config file** (`.claude/scout.local.md`):
 ```yaml
 ---
 engine_url: https://178.104.0.194
@@ -128,7 +128,7 @@ Subcommands with natural language support:
 | Scenario | Behavior |
 |---|---|
 | No config saved | "Run `/connect` to set up your engine connection." |
-| Connection refused | "Cannot reach otto-engine at {url}. Is the server running?" |
+| Connection refused | "Cannot reach scout-engine at {url}. Is the server running?" |
 | 401/403 | "API key rejected. Run `/connect` to reconfigure." |
 | Workflow name not found | List available workflows, ask which one |
 | Self-signed cert (IP URL) | Skip TLS verification automatically |
@@ -137,14 +137,14 @@ Subcommands with natural language support:
 ## What Already Exists vs. What Needs Building
 
 ### Already exists:
-- otto-engine API (all endpoints deployed and working)
+- scout-engine API (all endpoints deployed and working)
 - `/attach` and `/resume` commands (inline httpx, to be refactored)
-- `OTTO_ENGINE_URL` env var convention
+- `SCOUT_ENGINE_URL` env var convention
 - Workflow JSON schema shared between both repos
 - `WorkflowConverter.from_history()` for session → JSON conversion
 
 ### Needs building:
-1. `src/otto/engine.py` — EngineClient class
+1. `src/scout/engine.py` — EngineClient class
 2. `commands/connect.md` — Connection setup command
 3. `commands/sync.md` — Workflow upload command
 4. `commands/run.md` — Remote execution trigger

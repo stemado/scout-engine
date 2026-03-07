@@ -2,11 +2,11 @@
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
-**Goal:** Connect the Otto plugin to a remote otto-engine server for workflow deployment, execution, monitoring, and scheduling.
+**Goal:** Connect the Scout plugin to a remote scout-engine server for workflow deployment, execution, monitoring, and scheduling.
 
-**Architecture:** Add an `EngineClient` class (`src/otto/engine.py`) that wraps the otto-engine REST API with config discovery, auth, and error handling. Five new slash commands (`/connect`, `/sync`, `/run`, `/status`, `/schedule`) use the client. Existing `/attach` and `/resume` are refactored to use it too.
+**Architecture:** Add an `EngineClient` class (`src/scout/engine.py`) that wraps the scout-engine REST API with config discovery, auth, and error handling. Five new slash commands (`/connect`, `/sync`, `/run`, `/status`, `/schedule`) use the client. Existing `/attach` and `/resume` are refactored to use it too.
 
-**Tech Stack:** httpx (already in deps), pydantic for config, YAML frontmatter in `.claude/otto.local.md` for saved credentials.
+**Tech Stack:** httpx (already in deps), pydantic for config, YAML frontmatter in `.claude/scout.local.md` for saved credentials.
 
 **Design doc:** `docs/plans/2026-03-07-engine-integration-design.md`
 
@@ -15,8 +15,9 @@
 ### Task 1: EngineClient — config discovery and health check
 
 **Files:**
-- Create: `src/otto/engine.py`
+- Create: `src/scout/engine.py`
 - Create: `tests/test_engine.py`
+- Modify: `pyproject.toml` — add `pyyaml>=6.0` to dependencies (used by `_parse_frontmatter`)
 
 **Step 1: Write failing tests for config discovery and health check**
 
@@ -27,14 +28,14 @@ import pytest
 import httpx
 from unittest.mock import AsyncMock, patch, mock_open
 
-from otto.engine import EngineClient
+from scout.engine import EngineClient
 
 
 # --- Config discovery ---
 
 def test_config_from_local_md(tmp_path):
-    """Reads engine_url and engine_api_key from .claude/otto.local.md frontmatter."""
-    local_md = tmp_path / ".claude" / "otto.local.md"
+    """Reads engine_url and engine_api_key from .claude/scout.local.md frontmatter."""
+    local_md = tmp_path / ".claude" / "scout.local.md"
     local_md.parent.mkdir(parents=True)
     local_md.write_text("---\nengine_url: https://example.com\nengine_api_key: secret-key\n---\n")
     client = EngineClient(config_dir=tmp_path)
@@ -44,8 +45,8 @@ def test_config_from_local_md(tmp_path):
 
 def test_config_from_env_vars(tmp_path, monkeypatch):
     """Falls back to env vars when no .local.md exists."""
-    monkeypatch.setenv("OTTO_ENGINE_URL", "https://env.example.com")
-    monkeypatch.setenv("OTTO_ENGINE_API_KEY", "env-key")
+    monkeypatch.setenv("SCOUT_ENGINE_URL", "https://env.example.com")
+    monkeypatch.setenv("SCOUT_ENGINE_API_KEY", "env-key")
     client = EngineClient(config_dir=tmp_path)
     assert client.base_url == "https://env.example.com"
     assert client.api_key == "env-key"
@@ -53,8 +54,8 @@ def test_config_from_env_vars(tmp_path, monkeypatch):
 
 def test_config_local_md_overrides_env(tmp_path, monkeypatch):
     """local.md takes precedence over env vars."""
-    monkeypatch.setenv("OTTO_ENGINE_URL", "https://env.example.com")
-    local_md = tmp_path / ".claude" / "otto.local.md"
+    monkeypatch.setenv("SCOUT_ENGINE_URL", "https://env.example.com")
+    local_md = tmp_path / ".claude" / "scout.local.md"
     local_md.parent.mkdir(parents=True)
     local_md.write_text("---\nengine_url: https://file.example.com\nengine_api_key: file-key\n---\n")
     client = EngineClient(config_dir=tmp_path)
@@ -70,7 +71,7 @@ def test_config_defaults(tmp_path):
 
 def test_is_configured_true(tmp_path):
     """is_configured returns True when API key is set."""
-    local_md = tmp_path / ".claude" / "otto.local.md"
+    local_md = tmp_path / ".claude" / "scout.local.md"
     local_md.parent.mkdir(parents=True)
     local_md.write_text("---\nengine_url: https://x.com\nengine_api_key: key\n---\n")
     client = EngineClient(config_dir=tmp_path)
@@ -87,7 +88,7 @@ def test_is_configured_false(tmp_path):
 
 def test_tls_verify_disabled_for_ip(tmp_path):
     """Skip TLS verification when URL is an IP address."""
-    local_md = tmp_path / ".claude" / "otto.local.md"
+    local_md = tmp_path / ".claude" / "scout.local.md"
     local_md.parent.mkdir(parents=True)
     local_md.write_text("---\nengine_url: https://178.104.0.194\nengine_api_key: k\n---\n")
     client = EngineClient(config_dir=tmp_path)
@@ -96,22 +97,22 @@ def test_tls_verify_disabled_for_ip(tmp_path):
 
 def test_tls_verify_enabled_for_domain(tmp_path):
     """Verify TLS normally when URL is a domain."""
-    local_md = tmp_path / ".claude" / "otto.local.md"
+    local_md = tmp_path / ".claude" / "scout.local.md"
     local_md.parent.mkdir(parents=True)
-    local_md.write_text("---\nengine_url: https://otto.example.com\nengine_api_key: k\n---\n")
+    local_md.write_text("---\nengine_url: https://scout.example.com\nengine_api_key: k\n---\n")
     client = EngineClient(config_dir=tmp_path)
     assert client._verify_tls is True
 ```
 
 **Step 2: Run tests to verify they fail**
 
-Run: `cd D:/Projects/otto && uv run pytest tests/test_engine.py -v`
-Expected: FAIL — `ModuleNotFoundError: No module named 'otto.engine'`
+Run: `cd D:/Projects/scout && uv run pytest tests/test_engine.py -v`
+Expected: FAIL — `ModuleNotFoundError: No module named 'scout.engine'`
 
 **Step 3: Implement EngineClient with config discovery**
 
 ```python
-"""HTTP client for the otto-engine remote API."""
+"""HTTP client for the scout-engine remote API."""
 
 from __future__ import annotations
 
@@ -124,7 +125,7 @@ import httpx
 import yaml
 
 
-_CONFIG_FILENAME = ".claude/otto.local.md"
+_CONFIG_FILENAME = ".claude/scout.local.md"
 
 
 def _parse_frontmatter(text: str) -> dict:
@@ -148,7 +149,7 @@ def _is_ip_address(url: str) -> bool:
 
 
 class EngineClient:
-    """Async wrapper around the otto-engine REST API."""
+    """Async wrapper around the scout-engine REST API."""
 
     def __init__(self, config_dir: Path | None = None):
         config = self._load_config(config_dir or Path.cwd())
@@ -161,21 +162,21 @@ class EngineClient:
         return bool(self.api_key)
 
     def _load_config(self, config_dir: Path) -> dict:
-        """Load config from .claude/otto.local.md, falling back to env vars."""
+        """Load config from .claude/scout.local.md, falling back to env vars."""
         config: dict = {}
 
-        # Priority 1: .claude/otto.local.md
+        # Priority 1: .claude/scout.local.md
         config_file = config_dir / _CONFIG_FILENAME
         if config_file.exists():
             config = _parse_frontmatter(config_file.read_text())
 
         # Priority 2: env vars (only fill gaps)
         if "engine_url" not in config:
-            env_url = os.environ.get("OTTO_ENGINE_URL")
+            env_url = os.environ.get("SCOUT_ENGINE_URL")
             if env_url:
                 config["engine_url"] = env_url
         if "engine_api_key" not in config:
-            env_key = os.environ.get("OTTO_ENGINE_API_KEY")
+            env_key = os.environ.get("SCOUT_ENGINE_API_KEY")
             if env_key:
                 config["engine_api_key"] = env_key
 
@@ -207,12 +208,12 @@ class EngineClient:
             return resp.json()
         except httpx.ConnectError:
             raise EngineConnectionError(
-                f"Cannot reach otto-engine at {self.base_url}. Is the server running?"
+                f"Cannot reach scout-engine at {self.base_url}. Is the server running?"
             )
 
     @staticmethod
     def save_config(config_dir: Path, url: str, api_key: str) -> Path:
-        """Save engine config to .claude/otto.local.md."""
+        """Save engine config to .claude/scout.local.md."""
         config_file = config_dir / _CONFIG_FILENAME
         config_file.parent.mkdir(parents=True, exist_ok=True)
         config_file.write_text(
@@ -231,14 +232,14 @@ class EngineAuthError(Exception):
 
 **Step 4: Run tests to verify they pass**
 
-Run: `cd D:/Projects/otto && uv run pytest tests/test_engine.py -v`
+Run: `cd D:/Projects/scout && uv run pytest tests/test_engine.py -v`
 Expected: All 8 tests PASS
 
 **Step 5: Commit**
 
 ```bash
-cd D:/Projects/otto
-git add src/otto/engine.py tests/test_engine.py
+cd D:/Projects/scout
+git add src/scout/engine.py tests/test_engine.py
 git commit -m "feat: add EngineClient with config discovery and health check"
 ```
 
@@ -247,7 +248,7 @@ git commit -m "feat: add EngineClient with config discovery and health check"
 ### Task 2: EngineClient — API methods (workflows, executions, schedules)
 
 **Files:**
-- Modify: `src/otto/engine.py`
+- Modify: `src/scout/engine.py`
 - Modify: `tests/test_engine.py`
 
 **Step 1: Write failing tests for API methods**
@@ -260,7 +261,7 @@ Add these tests to `tests/test_engine.py`:
 @pytest.fixture
 def client(tmp_path):
     """Client with config pointing to a fake server."""
-    local_md = tmp_path / ".claude" / "otto.local.md"
+    local_md = tmp_path / ".claude" / "scout.local.md"
     local_md.parent.mkdir(parents=True)
     local_md.write_text("---\nengine_url: https://test.example.com\nengine_api_key: test-key\n---\n")
     return EngineClient(config_dir=tmp_path)
@@ -349,12 +350,12 @@ async def test_delete_schedule(client):
 
 **Step 2: Run tests to verify they fail**
 
-Run: `cd D:/Projects/otto && uv run pytest tests/test_engine.py -v`
+Run: `cd D:/Projects/scout && uv run pytest tests/test_engine.py -v`
 Expected: FAIL — `AttributeError: 'EngineClient' object has no attribute 'sync_workflow'`
 
 **Step 3: Add API methods to EngineClient**
 
-Add to `src/otto/engine.py`, inside the `EngineClient` class:
+Add to `src/scout/engine.py`, inside the `EngineClient` class:
 
 ```python
     async def sync_workflow(self, workflow: dict) -> dict:
@@ -418,14 +419,14 @@ Add to `src/otto/engine.py`, inside the `EngineClient` class:
 
 **Step 4: Run tests to verify they pass**
 
-Run: `cd D:/Projects/otto && uv run pytest tests/test_engine.py -v`
+Run: `cd D:/Projects/scout && uv run pytest tests/test_engine.py -v`
 Expected: All 18 tests PASS
 
 **Step 5: Commit**
 
 ```bash
-cd D:/Projects/otto
-git add src/otto/engine.py tests/test_engine.py
+cd D:/Projects/scout
+git add src/scout/engine.py tests/test_engine.py
 git commit -m "feat: add EngineClient API methods for workflows, executions, schedules"
 ```
 
@@ -440,29 +441,29 @@ git commit -m "feat: add EngineClient API methods for workflows, executions, sch
 
 ```markdown
 ---
-description: Connect to a remote otto-engine server
+description: Connect to a remote scout-engine server
 argument-hint: "[url]"
 ---
 
-Set up the connection to a remote otto-engine server. This saves the URL and API key so that `/sync`, `/run`, `/status`, and `/schedule` can talk to the engine.
+Set up the connection to a remote scout-engine server. This saves the URL and API key so that `/sync`, `/run`, `/status`, and `/schedule` can talk to the engine.
 
 ## Steps
 
 1. **Get the engine URL.**
-   If the user provided a URL as an argument, use it. Otherwise, ask: "What is the URL of your otto-engine server? (e.g., https://178.104.0.194)"
+   If the user provided a URL as an argument, use it. Otherwise, ask: "What is the URL of your scout-engine server? (e.g., https://178.104.0.194)"
 
 2. **Get the API key.**
-   Ask: "What is the API key? (find it on the server with `cat /root/otto-credentials.txt`)"
+   Ask: "What is the API key? (find it on the server with `cat /root/scout-credentials.txt`)"
 
 3. **Test the connection.**
    Use `httpx` to call `GET {url}/api/health` with the header `Authorization: Bearer {api_key}`. If the URL is an IP address, skip TLS verification (`verify=False`).
 
    - If the health check succeeds: continue to step 4.
-   - If connection refused: "Cannot reach otto-engine at {url}. Is the server running?"
+   - If connection refused: "Cannot reach scout-engine at {url}. Is the server running?"
    - If 401/403: "API key rejected. Double-check the key and try again."
 
 4. **Save the configuration.**
-   Write to `.claude/otto.local.md` in the current working directory:
+   Write to `.claude/scout.local.md` in the current working directory:
    ```yaml
    ---
    engine_url: {url}
@@ -472,7 +473,7 @@ Set up the connection to a remote otto-engine server. This saves the URL and API
    Create the `.claude/` directory if it doesn't exist.
 
 5. **Confirm.**
-   Report: "Connected to otto-engine at {url} (v{version}). You can now use `/sync`, `/run`, `/status`, and `/schedule`."
+   Report: "Connected to scout-engine at {url} (v{version}). You can now use `/sync`, `/run`, `/status`, and `/schedule`."
    Include the version from the health check response.
 
 Use `httpx` for the HTTP call. Do not use the `EngineClient` class — this command creates the config that `EngineClient` reads.
@@ -480,13 +481,13 @@ Use `httpx` for the HTTP call. Do not use the `EngineClient` class — this comm
 
 **Step 2: Verify the command is discoverable**
 
-Run: `ls D:/Projects/otto/commands/connect.md`
+Run: `ls D:/Projects/scout/commands/connect.md`
 Expected: File exists
 
 **Step 3: Commit**
 
 ```bash
-cd D:/Projects/otto
+cd D:/Projects/scout
 git add commands/connect.md
 git commit -m "feat: add /connect command for engine setup"
 ```
@@ -502,17 +503,17 @@ git commit -m "feat: add /connect command for engine setup"
 
 ```markdown
 ---
-description: Upload a workflow to the remote otto-engine server
+description: Upload a workflow to the remote scout-engine server
 argument-hint: "[workflow-name]"
 allowed-tools:
-  - "mcp__plugin_otto-marketplace_otto__*"
+  - "mcp__plugin_scout_scout__*"
 ---
 
-Upload a workflow to the remote otto-engine server for execution and scheduling.
+Upload a workflow to the remote scout-engine server for execution and scheduling.
 
 ## Prerequisites
 
-Check if `.claude/otto.local.md` exists in the current working directory. If not, tell the user: "No engine connection configured. Run `/connect` first."
+Check if `.claude/scout.local.md` exists in the current working directory. If not, tell the user: "No engine connection configured. Run `/connect` first."
 
 Read the `engine_url` and `engine_api_key` from the YAML frontmatter.
 
@@ -545,8 +546,8 @@ If no argument was provided:
 
 2. Ask the user for a workflow name: "What should this workflow be called?"
 
-3. Build the workflow JSON using `WorkflowConverter.from_history()` from `src/otto/workflow.py`:
-   - Import: `from otto.workflow import WorkflowConverter`
+3. Build the workflow JSON using `WorkflowConverter.from_history()` from `src/scout/workflow.py`:
+   - Import: `from scout.workflow import WorkflowConverter`
    - Call: `workflow = WorkflowConverter.from_history(history, name=name, description=description)`
    - Serialize: `workflow.model_dump(exclude_none=True)`
 
@@ -556,7 +557,7 @@ If no argument was provided:
 
 ## Error Handling
 
-- Connection errors: "Cannot reach otto-engine at {url}. Is the server running?"
+- Connection errors: "Cannot reach scout-engine at {url}. Is the server running?"
 - 401/403: "API key rejected. Run `/connect` to reconfigure."
 - 422 (validation error): Show the engine's error message.
 
@@ -566,7 +567,7 @@ Use `httpx` for all HTTP calls.
 **Step 2: Commit**
 
 ```bash
-cd D:/Projects/otto
+cd D:/Projects/scout
 git add commands/sync.md
 git commit -m "feat: add /sync command for workflow upload"
 ```
@@ -582,15 +583,15 @@ git commit -m "feat: add /sync command for workflow upload"
 
 ```markdown
 ---
-description: Run a workflow on the remote otto-engine server
+description: Run a workflow on the remote scout-engine server
 argument-hint: "<workflow-name>"
 ---
 
-Trigger a workflow execution on the remote otto-engine server.
+Trigger a workflow execution on the remote scout-engine server.
 
 ## Prerequisites
 
-Check if `.claude/otto.local.md` exists in the current working directory. If not, tell the user: "No engine connection configured. Run `/connect` first."
+Check if `.claude/scout.local.md` exists in the current working directory. If not, tell the user: "No engine connection configured. Run `/connect` first."
 
 Read the `engine_url` and `engine_api_key` from the YAML frontmatter.
 
@@ -624,7 +625,7 @@ Read the `engine_url` and `engine_api_key` from the YAML frontmatter.
 
 ## Error Handling
 
-- Connection errors: "Cannot reach otto-engine at {url}. Is the server running?"
+- Connection errors: "Cannot reach scout-engine at {url}. Is the server running?"
 - 401/403: "API key rejected. Run `/connect` to reconfigure."
 - 404 on run: "Workflow not found on engine. It may have been deleted."
 
@@ -634,7 +635,7 @@ Use `httpx` for all HTTP calls.
 **Step 2: Commit**
 
 ```bash
-cd D:/Projects/otto
+cd D:/Projects/scout
 git add commands/run.md
 git commit -m "feat: add /run command for remote execution"
 ```
@@ -650,15 +651,15 @@ git commit -m "feat: add /run command for remote execution"
 
 ```markdown
 ---
-description: Check execution status on the remote otto-engine server
+description: Check execution status on the remote scout-engine server
 argument-hint: "[execution-id]"
 ---
 
-View execution status from the remote otto-engine server.
+View execution status from the remote scout-engine server.
 
 ## Prerequisites
 
-Check if `.claude/otto.local.md` exists in the current working directory. If not, tell the user: "No engine connection configured. Run `/connect` first."
+Check if `.claude/scout.local.md` exists in the current working directory. If not, tell the user: "No engine connection configured. Run `/connect` first."
 
 Read the `engine_url` and `engine_api_key` from the YAML frontmatter.
 
@@ -706,7 +707,7 @@ Read the `engine_url` and `engine_api_key` from the YAML frontmatter.
 
 ## Error Handling
 
-- Connection errors: "Cannot reach otto-engine at {url}. Is the server running?"
+- Connection errors: "Cannot reach scout-engine at {url}. Is the server running?"
 - 401/403: "API key rejected. Run `/connect` to reconfigure."
 
 Use `httpx` for all HTTP calls.
@@ -715,51 +716,86 @@ Use `httpx` for all HTTP calls.
 **Step 2: Commit**
 
 ```bash
-cd D:/Projects/otto
+cd D:/Projects/scout
 git add commands/status.md
 git commit -m "feat: add /status command for execution monitoring"
 ```
 
 ---
 
-### Task 7: `/schedule` command
+### Task 7: `/schedule` command (smart routing: remote or local)
 
 **Files:**
-- Create: `commands/schedule.md`
+- Modify: `commands/schedule.md`
 
-**Step 1: Write the command file**
+**Design:** One `/schedule` command with smart routing. If an engine connection exists (`.claude/scout.local.md`), schedule remotely on the engine. Otherwise, fall back to the existing local OS scheduler. The user doesn't choose — the system picks the right backend based on context. A `--local` flag overrides to force local scheduling when connected to an engine.
+
+**Step 1: Replace the command file**
+
+Replace the contents of `commands/schedule.md` with:
 
 ```markdown
 ---
-description: Manage cron schedules on the remote otto-engine server
-argument-hint: "<workflow|list|update|delete> [args]"
+description: Schedule an exported workflow to run automatically
+argument-hint: "[list | workflow-name <when> | update <id> <changes> | delete <name-or-id>] [--local]"
+allowed-tools:
+  - "mcp__plugin_scout_scout__schedule_create"
+  - "mcp__plugin_scout_scout__schedule_list"
+  - "mcp__plugin_scout_scout__schedule_delete"
+  - "Read"
+  - "AskUserQuestion"
 ---
 
-Create, list, update, and delete cron schedules on the remote otto-engine server.
+Manage scheduled tasks for Scout workflows. Automatically routes to the best scheduler:
 
-## Prerequisites
+- **Engine connected** (`.claude/scout.local.md` exists) → schedules on the remote scout-engine server (persistent, runs even when your machine is off)
+- **No engine** → schedules locally via OS task manager (Windows Task Scheduler / macOS launchd / Linux cron)
 
-Check if `.claude/otto.local.md` exists in the current working directory. If not, tell the user: "No engine connection configured. Run `/connect` first."
+Use `--local` to force local scheduling even when an engine is connected.
 
-Read the `engine_url` and `engine_api_key` from the YAML frontmatter.
+## Step 0: Determine the scheduling backend
 
-## Subcommands
+1. Check if the argument contains `--local`. If so, strip it from the argument and use **local mode**.
+2. Otherwise, check if `.claude/scout.local.md` exists in the current working directory.
+   - If it exists, read `engine_url` and `engine_api_key` from the YAML frontmatter. Use **remote mode**.
+   - If it does not exist, use **local mode**.
 
-### Create: `/schedule <workflow> <when>`
+## Parse the argument
 
-1. **Resolve the workflow.** Same logic as `/run` — list workflows from engine, match by name or ID.
+Determine the operation from the remaining argument (after stripping `--local`):
+
+- **No argument or `list`**: Go to List
+- **`delete <name-or-id>`**: Go to Delete
+- **`update <id> <changes>`**: Go to Update (remote mode only)
+- **`<workflow-name>` or `<workflow-name> <when>`**: Go to Create
+
+---
+
+## Create a schedule
+
+### Remote mode
+
+1. **Resolve the workflow.** List workflows from the engine:
+   ```
+   GET {engine_url}/api/workflows
+   Authorization: Bearer {api_key}
+   ```
+   If the URL is an IP address, skip TLS verification.
+
+   Match the argument by name (case-insensitive) or ID. If no match, list available workflows and suggest `/sync` if the list is empty.
 
 2. **Parse the schedule.**
    `<when>` can be either:
    - **Natural language**: "every weekday at 9am", "daily at midnight", "every hour", "every Monday at 3pm"
-     → You (Claude) parse this to a standard cron expression. Examples:
+     → Parse to a standard cron expression. Examples:
      - "every weekday at 9am" → `0 9 * * MON-FRI`
      - "daily at midnight" → `0 0 * * *`
      - "every hour" → `0 * * * *`
      - "every Monday at 3pm" → `0 15 * * MON`
    - **Cron syntax**: Starts with a digit or `*`, e.g., `"0 9 * * MON-FRI"` — use as-is.
+   - **No `<when>` provided**: Ask the user using AskUserQuestion (same flow as local mode).
 
-3. **Confirm with the user** before creating: "Create schedule for '{workflow_name}' running `{cron_expression}` ({human_readable})?"
+3. **Confirm** before creating: "Create schedule for '{workflow_name}' running `{cron_expression}` ({human_readable})?"
 
 4. **Create the schedule:**
    ```
@@ -769,11 +805,49 @@ Read the `engine_url` and `engine_api_key` from the YAML frontmatter.
 
    {"workflow_id": "{id}", "cron_expression": "{cron}", "timezone": "UTC"}
    ```
-   If the URL is an IP address, skip TLS verification.
 
-5. **Report:** "Schedule created (id: {short_id}). '{workflow_name}' will run {human_readable}. Next run: {next_run}."
+5. **Report:**
+   ```
+   Scheduled "enrollment" to run daily at 6:45 AM
+   Platform: scout-engine (remote)
+   Next run: 2026-03-07 06:45 UTC
 
-### List: `/schedule list`
+   To view all schedules: /schedule list
+   To remove this schedule: /schedule delete <id>
+   ```
+
+### Local mode
+
+1. **Find the workflow.** Check that `workflows/<name>/<name>.py` exists using Read. If not: "No exported workflow found at `workflows/<name>/`. Run `/export <name>` first."
+
+2. **Ask for schedule details** using AskUserQuestion:
+   - "How often should this run?" — Daily / Weekly / Weekdays (Mon-Fri) / One-time
+   - "What time should it run?" — Accept flexible formats (6:45am, 06:45, 6:45 AM), convert to HH:MM 24-hour.
+   - If Weekly: "Which days?" — MON, TUE, WED, THU, FRI, SAT, SUN (multi-select)
+
+3. **Create the scheduled task.** Map answers to MCP tool parameters:
+   - Daily → `schedule="DAILY"`
+   - Weekly → `schedule="WEEKLY"`, `days="MON,WED,FRI"`
+   - Weekdays → `schedule="WEEKLY"`, `days="MON,TUE,WED,THU,FRI"`
+   - One-time → `schedule="ONCE"`
+
+   Call `schedule_create` with `name`, `workflow_dir` (absolute path), `schedule`, `time`, and `days`.
+
+4. **Report:**
+   ```
+   Scheduled "enrollment" to run daily at 6:45 AM
+   Platform: Windows (Task Scheduler)
+   Script: workflows/enrollment/enrollment.py
+
+   To view all schedules: /schedule list
+   To remove this schedule: /schedule delete enrollment
+   ```
+
+---
+
+## List schedules
+
+### Remote mode
 
 1. Fetch schedules:
    ```
@@ -790,14 +864,28 @@ Read the `engine_url` and `engine_api_key` from the YAML frontmatter.
 
    If no schedules: "No schedules found. Create one with `/schedule <workflow> <when>`."
 
-### Update: `/schedule update <id> <changes>`
+### Local mode
 
-1. Parse the changes from the argument. Supported:
+Call the `schedule_list` MCP tool. Display as a table:
+
+| Workflow | Schedule | Time | Days | Status | Next Run |
+|----------|----------|------|------|--------|----------|
+| enrollment | Daily | 6:45 AM | | Ready | 2/28/2026 |
+
+If no tasks: "No scheduled tasks found. Export a workflow with `/export` first, then schedule it with `/schedule <name>`."
+
+---
+
+## Update a schedule (remote mode only)
+
+If in local mode: "Schedule updates are only supported with a remote engine. Delete and recreate the schedule, or run `/connect` to set up an engine."
+
+1. Parse changes from the argument. Supported:
    - `enabled=true` or `enabled=false`
    - A new cron expression or natural language schedule
    - `timezone=America/New_York`
 
-2. **Send the update:**
+2. Send the update:
    ```
    PUT {engine_url}/api/schedules/{id}
    Authorization: Bearer {api_key}
@@ -808,88 +896,65 @@ Read the `engine_url` and `engine_api_key` from the YAML frontmatter.
 
 3. **Report:** "Schedule {short_id} updated. {summary of changes}."
 
-### Delete: `/schedule delete <id>`
+---
+
+## Delete a schedule
+
+### Remote mode
 
 1. **Confirm:** "Delete schedule {short_id} for '{workflow_name}'? This cannot be undone."
-
 2. If confirmed:
    ```
    DELETE {engine_url}/api/schedules/{id}
    Authorization: Bearer {api_key}
    ```
-
 3. **Report:** "Schedule {short_id} deleted."
+
+### Local mode
+
+1. **Confirm:** "Delete the scheduled task for **<name>**? This removes it from the system scheduler."
+2. Call the `schedule_delete` MCP tool with the task name.
+3. Confirm deletion.
+
+---
 
 ## Error Handling
 
-- Connection errors: "Cannot reach otto-engine at {url}. Is the server running?"
+**Remote mode:**
+- Connection errors: "Cannot reach scout-engine at {url}. Is the server running?"
 - 401/403: "API key rejected. Run `/connect` to reconfigure."
 - 422 (invalid cron): Show the engine's validation error.
 - Schedule not found: "Schedule '{id}' not found."
 
-Use `httpx` for all HTTP calls.
+**Local mode:**
+- Workflow not found: "No exported workflow found at `workflows/<name>/`. Run `/export <name>` first."
+- MCP tool errors: Surface the error message from the tool.
+
+Use `httpx` for remote HTTP calls.
 ```
 
 **Step 2: Commit**
 
 ```bash
-cd D:/Projects/otto
+cd D:/Projects/scout
 git add commands/schedule.md
-git commit -m "feat: add /schedule command for cron management"
+git commit -m "feat: unify /schedule with smart routing (remote engine or local OS)"
 ```
 
 ---
 
-### Task 8: Refactor `/attach` and `/resume` to reference EngineClient
-
-**Files:**
-- Modify: `commands/attach.md`
-- Modify: `commands/resume.md`
-
-**Step 1: Update `/attach` engine discovery section**
-
-Replace the current step 1 in `commands/attach.md`:
-
-```
-1. **Determine the otto-engine base URL.**
-   Default: `http://localhost:8000`. Check if the environment variable `OTTO_ENGINE_URL` is set and use that instead.
-```
-
-With:
-
-```
-1. **Determine the otto-engine connection.**
-   Read `engine_url` and `engine_api_key` from `.claude/otto.local.md` YAML frontmatter in the current working directory. If the file doesn't exist, fall back to the `OTTO_ENGINE_URL` environment variable (default: `http://localhost:8000`).
-
-   Include `Authorization: Bearer {api_key}` on all HTTP requests to the engine if an API key is available. If the URL is an IP address, skip TLS verification (`verify=False`).
-```
-
-**Step 2: Apply the same update to `/resume`**
-
-Replace the same pattern in `commands/resume.md` step 2.
-
-**Step 3: Commit**
-
-```bash
-cd D:/Projects/otto
-git add commands/attach.md commands/resume.md
-git commit -m "refactor: update /attach and /resume to use .claude/otto.local.md config"
-```
-
----
-
-### Task 9: Full integration test
+### Task 8: Full integration test
 
 **Step 1: Run all tests**
 
-Run: `cd D:/Projects/otto && uv run pytest -v`
+Run: `cd D:/Projects/scout && uv run pytest -v`
 Expected: All tests pass (existing + new engine tests)
 
 **Step 2: Manual smoke test against live server**
 
 Test the full loop from a Claude Code session:
 1. `/connect https://178.104.0.194` → enter API key → health check passes
-2. Verify `.claude/otto.local.md` was created with correct values
+2. Verify `.claude/scout.local.md` was created with correct values
 3. `/sync` with an active session or existing workflow
 4. `/run <workflow-name>` → execution starts
 5. `/status` → shows the execution
@@ -898,7 +963,7 @@ Test the full loop from a Claude Code session:
 **Step 3: Commit any fixes**
 
 ```bash
-cd D:/Projects/otto
+cd D:/Projects/scout
 git add -A
 git commit -m "fix: integration test fixes"
 ```
