@@ -633,3 +633,62 @@ async def test_resume_with_jump_skips_to_step():
     assert result.status == "completed"
     # Step 3 "Skip me" should NOT have been executed
     mock_driver.click.assert_called_once_with("#target")
+
+
+@pytest.mark.asyncio
+async def test_screenshot_captured_per_step(tmp_path):
+    """Each step should produce a screenshot PNG in the screenshot dir."""
+    wf = _make_workflow([
+        WorkflowStep(order=1, name="Navigate", action="navigate", value="https://example.com"),
+    ])
+    mock_driver = MagicMock()
+    # Simulate CDP returning base64 PNG data (1x1 transparent pixel)
+    import base64
+    fake_png = base64.b64encode(b"\x89PNG\r\n\x1a\nfake").decode()
+    mock_driver.run_cdp_command.return_value = fake_png
+
+    with patch("app.services.executor._create_driver", return_value=mock_driver):
+        result = await execute_workflow(
+            wf, screenshot_dir=str(tmp_path), execution_id="ss-test",
+        )
+
+    assert result.status == "completed"
+    assert result.steps[0].screenshot_path is not None
+    from pathlib import Path
+    ss_path = Path(result.steps[0].screenshot_path)
+    assert ss_path.exists()
+    assert ss_path.suffix == ".png"
+    # File should be inside {screenshot_dir}/{execution_id}/
+    assert ss_path.parent.name == "ss-test"
+
+
+@pytest.mark.asyncio
+async def test_screenshot_not_captured_without_screenshot_dir():
+    """When screenshot_dir is empty, no screenshot should be captured."""
+    wf = _make_workflow([
+        WorkflowStep(order=1, name="Navigate", action="navigate", value="https://example.com"),
+    ])
+    mock_driver = MagicMock()
+    with patch("app.services.executor._create_driver", return_value=mock_driver):
+        result = await execute_workflow(wf)
+
+    assert result.steps[0].screenshot_path is None
+
+
+@pytest.mark.asyncio
+async def test_screenshot_failure_does_not_fail_step(tmp_path):
+    """If screenshot capture fails, the step should still pass."""
+    wf = _make_workflow([
+        WorkflowStep(order=1, name="Navigate", action="navigate", value="https://example.com"),
+    ])
+    mock_driver = MagicMock()
+    mock_driver.run_cdp_command.side_effect = Exception("CDP error")
+
+    with patch("app.services.executor._create_driver", return_value=mock_driver):
+        result = await execute_workflow(
+            wf, screenshot_dir=str(tmp_path), execution_id="ss-fail",
+        )
+
+    assert result.status == "completed"
+    assert result.steps[0].status == "passed"
+    assert result.steps[0].screenshot_path is None

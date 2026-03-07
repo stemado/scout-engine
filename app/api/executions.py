@@ -62,6 +62,7 @@ async def _run_execution(
             execution_id=str(execution_id),
             pause_queue=pause_queue,
             pause_requested=pause_requested,
+            screenshot_dir=settings.screenshot_dir,
         )
     except UnresolvedVariableError as e:
         exec_result = ExecutionResult(status="failed", error=str(e))

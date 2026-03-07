@@ -224,6 +224,7 @@ def _execute_step_sync(
     driver, step: WorkflowStep, default_timeout: int,
     monitor: NetworkMonitor | None = None,
     human_mode: bool = False,
+    screenshot_dir: str | None = None,
 ) -> StepResult:
     """Execute a single step synchronously. Called from thread pool."""
     start = time.perf_counter()
@@ -388,6 +389,30 @@ def _execute_step_sync(
     except Exception as e:
         error = str(e)
 
+    # Capture screenshot after step (regardless of pass/fail)
+    screenshot_path = None
+    if screenshot_dir:
+        try:
+            import base64
+            from botasaurus_driver import cdp as _cdp
+
+            os.makedirs(screenshot_dir, exist_ok=True)
+            filename = f"{step.order:03d}_{step.action}.png"
+            filepath = os.path.join(screenshot_dir, filename)
+            b64_data = driver.run_cdp_command(
+                _cdp.page.capture_screenshot(format_="png")
+            )
+            # CDP may return raw string or tuple — normalize
+            if isinstance(b64_data, (list, tuple)):
+                b64_data = b64_data[0]
+            with open(filepath, "wb") as f:
+                f.write(base64.b64decode(b64_data))
+            screenshot_path = filepath
+        except Exception:
+            logging.getLogger(__name__).debug(
+                "Screenshot capture failed for step %d", step.order, exc_info=True,
+            )
+
     elapsed = int((time.perf_counter() - start) * 1000)
     return StepResult(
         step_order=step.order,
@@ -396,6 +421,7 @@ def _execute_step_sync(
         status="passed" if error is None else "failed",
         elapsed_ms=elapsed,
         error=error,
+        screenshot_path=screenshot_path,
     )
 
 
@@ -408,6 +434,7 @@ async def execute_workflow(
     execution_id: str | None = None,
     pause_queue: queue.Queue | None = None,
     pause_requested: threading.Event | None = None,
+    screenshot_dir: str = "",
 ) -> ExecutionResult:
     """Execute a workflow asynchronously.
 
@@ -447,6 +474,13 @@ async def execute_workflow(
 
         # Configure Chrome download directory (no-op if no download steps)
         _setup_download_dir(driver, download_dir)
+
+        # Build per-execution screenshot directory
+        effective_screenshot_dir = None
+        if screenshot_dir:
+            effective_screenshot_dir = os.path.join(
+                screenshot_dir, execution_id or "default",
+            )
 
         # Browser session attachment: import once, use throughout
         _bs_register = _bs_unregister = _bs_update_step = _bs_StepProgress = None
@@ -571,6 +605,7 @@ async def execute_workflow(
                 result = _execute_step_sync(
                     driver, step, default_timeout,
                     monitor=monitor, human_mode=human_mode,
+                    screenshot_dir=effective_screenshot_dir,
                 )
                 results.append(result)
 
