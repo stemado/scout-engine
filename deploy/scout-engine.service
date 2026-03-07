@@ -1,0 +1,24 @@
+[Unit]
+Description=scout-engine workflow execution service
+After=network.target postgresql.service
+
+[Service]
+Type=exec
+User=scout
+Group=scout
+WorkingDirectory=/opt/scout-engine
+ExecStart=/opt/scout-engine/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000
+Restart=on-failure
+RestartSec=5
+
+# Load environment from .env file
+EnvironmentFile=/opt/scout-engine/.env
+
+# Security hardening
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadWritePaths=/opt/scout-engine/downloads /opt/scout-engine/screenshots
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target

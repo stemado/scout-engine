@@ -1,0 +1,27 @@
+{
+  "schema_version": "1.0",
+  "name": "integration-test",
+  "description": "Simple navigation workflow for integration testing",
+  "variables": {},
+  "settings": {
+    "headless": true,
+    "default_timeout_ms": 10000,
+    "step_delay_ms": 100,
+    "on_error": "stop"
+  },
+  "steps": [
+    {
+      "order": 1,
+      "name": "Navigate to example.com",
+      "action": "navigate",
+      "value": "https://example.com"
+    },
+    {
+      "order": 2,
+      "name": "Wait for heading",
+      "action": "wait",
+      "selector": "h1",
+      "timeout_ms": 5000
+    }
+  ]
+}

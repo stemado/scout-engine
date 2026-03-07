@@ -1,0 +1,5 @@
+# If you have a domain pointed at this server's IP, replace the hostname below.
+# Caddy auto-provisions Let's Encrypt TLS certificates — zero config.
+scout.yourdomain.com {
+    reverse_proxy localhost:8000
+}

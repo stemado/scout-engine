@@ -1,0 +1,177 @@
+{
+  "schema_version": "1.0",
+  "name": "benefitsconnect-employee-export",
+  "description": "Export Employee Records (500) from benefitsCONNECT System Administration for a specified company and date range, download the tab-delimited file, and convert to CSV.",
+  "created": "2026-02-21T21:37:00Z",
+  "source": {
+    "tool": "scout",
+    "session_id": "973614649571"
+  },
+  "variables": {
+    "BC_USERNAME": {
+      "type": "credential",
+      "description": "System Administration login username"
+    },
+    "BC_PASSWORD": {
+      "type": "credential",
+      "description": "System Administration login password"
+    },
+    "BC_URL": {
+      "type": "url",
+      "default": "https://www.benefitsconnect.net",
+      "description": "benefitsCONNECT System Administration base URL"
+    },
+    "COMPANY_NAME": {
+      "type": "string",
+      "default": "Century Care Management",
+      "description": "Company name to export (must match list exactly)"
+    }
+  },
+  "settings": {
+    "headless": false,
+    "human_mode": true,
+    "default_timeout_ms": 30000,
+    "step_delay_ms": 500,
+    "on_error": "stop"
+  },
+  "steps": [
+    {
+      "order": 1,
+      "name": "Navigate to System Administration login",
+      "action": "navigate",
+      "value": "${BC_URL}/admin/"
+    },
+    {
+      "order": 2,
+      "name": "Enter username",
+      "action": "type",
+      "selector": "input[name='Username']",
+      "value": "${BC_USERNAME}"
+    },
+    {
+      "order": 3,
+      "name": "Enter password",
+      "action": "type",
+      "selector": "input[name='Password']",
+      "value": "${BC_PASSWORD}"
+    },
+    {
+      "order": 4,
+      "name": "Click Login",
+      "action": "click",
+      "selector": "#DocContent > table > tbody > tr:nth-of-type(2) > td:nth-of-type(3) > div > a"
+    },
+    {
+      "order": 5,
+      "name": "Expand Company Management menu",
+      "action": "click",
+      "selector": "#DocContent > table > tbody > tr > td:nth-of-type(1) > a"
+    },
+    {
+      "order": 6,
+      "name": "Click Edit Company",
+      "action": "click",
+      "selector": "#CompMgmtMenu > a:nth-of-type(2)"
+    },
+    {
+      "order": 7,
+      "name": "Select target company by name",
+      "action": "run_js",
+      "value": "return (() => { const links = document.querySelectorAll('#CompanyList a'); for (const link of links) { if (link.textContent.trim() === 'Century Care Management') { link.click(); return true; } } return false; })()"
+    },
+    {
+      "order": 8,
+      "name": "Expand Company Administration menu",
+      "action": "click",
+      "selector": "#DocContent > table > tbody > tr > td:nth-of-type(1) > a"
+    },
+    {
+      "order": 9,
+      "name": "Click Export Data",
+      "action": "click",
+      "selector": "#CompanyMenu > span > a:nth-of-type(17)"
+    },
+    {
+      "order": 10,
+      "name": "Check Employee Records (500) checkbox",
+      "action": "click",
+      "selector": "#iRT500"
+    },
+    {
+      "order": 11,
+      "name": "Click Continue to selection criteria",
+      "action": "click",
+      "selector": "#DocContent > div:nth-of-type(2) > div > a:nth-of-type(1)"
+    },
+    {
+      "order": 12,
+      "name": "Set start date month",
+      "action": "select",
+      "selector": "select[name=\"StartMonth\"]",
+      "value": "1"
+    },
+    {
+      "order": 13,
+      "name": "Set start date day",
+      "action": "select",
+      "selector": "select[name=\"StartDay\"]",
+      "value": "1"
+    },
+    {
+      "order": 14,
+      "name": "Set start date year",
+      "action": "select",
+      "selector": "select[name=\"StartYear\"]",
+      "value": "2026"
+    },
+    {
+      "order": 15,
+      "name": "Set end date month",
+      "action": "select",
+      "selector": "select[name=\"EndMonth\"]",
+      "value": "12"
+    },
+    {
+      "order": 16,
+      "name": "Set end date day",
+      "action": "select",
+      "selector": "select[name=\"EndDay\"]",
+      "value": "31"
+    },
+    {
+      "order": 17,
+      "name": "Set end date year",
+      "action": "select",
+      "selector": "select[name=\"EndYear\"]",
+      "value": "2026"
+    },
+    {
+      "order": 18,
+      "name": "Click Process to generate export",
+      "action": "click",
+      "selector": "#DocContent > div:nth-of-type(2) > div > a:nth-of-type(1)",
+      "timeout_ms": 90000
+    },
+    {
+      "order": 19,
+      "name": "Wait for Download File link to appear",
+      "action": "wait",
+      "selector": "#DocContent > div:nth-of-type(1) > div > a",
+      "timeout_ms": 90000
+    },
+    {
+      "order": 20,
+      "name": "Click Download File link",
+      "action": "click",
+      "selector": "#DocContent > div:nth-of-type(1) > div > a"
+    }
+  ],
+  "cleanup_steps": [
+    {
+      "order": 1,
+      "name": "Logout to release server session",
+      "action": "navigate",
+      "value": "${BC_URL}/Logout.cfm"
+    }
+  ]
+}
