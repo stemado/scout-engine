@@ -3,6 +3,7 @@
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
+import app.database as app_database  # module import for patching
 from app.database import get_db, get_session_factory
 from app.main import app
 from app.models import Base
@@ -13,9 +14,10 @@ from app.services.scheduler import scheduler as apscheduler_instance
 async def test_db():
     """Override database with async SQLite in-memory for tests.
 
-    Overrides both ``get_db`` (for request-scoped sessions) and
-    ``get_session_factory`` (for background tasks that create their own
-    sessions outside the request lifecycle).
+    Overrides:
+    - ``get_db`` for request-scoped sessions (FastAPI dependency)
+    - ``get_session_factory`` for background tasks
+    - ``app.database.async_session`` for auth middleware (which can't use Depends)
     """
     engine = create_async_engine("sqlite+aiosqlite:///:memory:")
     async with engine.begin() as conn:
@@ -30,10 +32,16 @@ async def test_db():
     def override_get_session_factory():
         return session_factory
 
+    # Patch all three access paths to the session factory
     app.dependency_overrides[get_db] = override_get_db
     app.dependency_overrides[get_session_factory] = override_get_session_factory
+    original_async_session = app_database.async_session
+    app_database.async_session = session_factory  # middleware reads this at call time
+
     yield
+
     app.dependency_overrides.clear()
+    app_database.async_session = original_async_session
     await engine.dispose()
 
 
