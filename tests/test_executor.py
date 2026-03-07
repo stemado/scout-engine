@@ -676,6 +676,24 @@ async def test_screenshot_not_captured_without_screenshot_dir():
 
 
 @pytest.mark.asyncio
+async def test_download_dir_scoped_to_execution(tmp_path):
+    """Downloads should go to {download_dir}/{execution_id}/."""
+    wf = _make_workflow([
+        WorkflowStep(order=1, name="Nav", action="navigate", value="https://example.com"),
+    ])
+    exec_id = "test-exec-dl-123"
+    mock_driver = MagicMock()
+
+    with patch("app.services.executor._create_driver", return_value=mock_driver):
+        await execute_workflow(
+            wf, download_dir=str(tmp_path), execution_id=exec_id,
+        )
+
+    expected_dir = tmp_path / exec_id
+    assert expected_dir.exists()
+
+
+@pytest.mark.asyncio
 async def test_screenshot_failure_does_not_fail_step(tmp_path):
     """If screenshot capture fails, the step should still pass."""
     wf = _make_workflow([

@@ -472,8 +472,11 @@ async def execute_workflow(
             driver.enable_human_mode()
         monitor = NetworkMonitor()
 
-        # Configure Chrome download directory (no-op if no download steps)
-        _setup_download_dir(driver, download_dir)
+        # Configure Chrome download directory scoped per execution
+        effective_download_dir = os.path.join(
+            download_dir, execution_id or "default",
+        )
+        _setup_download_dir(driver, effective_download_dir)
 
         # Build per-execution screenshot directory
         effective_screenshot_dir = None
