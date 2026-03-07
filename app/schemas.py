@@ -88,3 +88,9 @@ class Workflow(BaseModel):
     settings: WorkflowSettings = Field(default_factory=WorkflowSettings)
     steps: list[WorkflowStep] = Field(default_factory=list)
     cleanup_steps: list[WorkflowStep] = Field(default_factory=list)
+
+
+class UploadWorkflowRequest(BaseModel):
+    """Request envelope for uploading a workflow."""
+
+    workflow: Workflow

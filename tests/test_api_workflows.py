@@ -31,7 +31,7 @@ async def client():
 
 @pytest.mark.asyncio
 async def test_upload_workflow(client):
-    resp = await client.post("/api/workflows", json=SAMPLE_WORKFLOW)
+    resp = await client.post("/api/workflows", json={"workflow": SAMPLE_WORKFLOW})
     assert resp.status_code == 201
     data = resp.json()
     assert data["name"] == "test-workflow"
@@ -41,7 +41,7 @@ async def test_upload_workflow(client):
 @pytest.mark.asyncio
 async def test_list_workflows(client):
     # Upload one first
-    await client.post("/api/workflows", json=SAMPLE_WORKFLOW)
+    await client.post("/api/workflows", json={"workflow": SAMPLE_WORKFLOW})
     resp = await client.get("/api/workflows")
     assert resp.status_code == 200
     data = resp.json()
@@ -50,7 +50,7 @@ async def test_list_workflows(client):
 
 @pytest.mark.asyncio
 async def test_get_workflow(client):
-    create_resp = await client.post("/api/workflows", json=SAMPLE_WORKFLOW)
+    create_resp = await client.post("/api/workflows", json={"workflow": SAMPLE_WORKFLOW})
     workflow_id = create_resp.json()["id"]
 
     resp = await client.get(f"/api/workflows/{workflow_id}")
@@ -66,7 +66,7 @@ async def test_get_workflow_not_found(client):
 
 @pytest.mark.asyncio
 async def test_delete_workflow(client):
-    create_resp = await client.post("/api/workflows", json=SAMPLE_WORKFLOW)
+    create_resp = await client.post("/api/workflows", json={"workflow": SAMPLE_WORKFLOW})
     workflow_id = create_resp.json()["id"]
 
     resp = await client.delete(f"/api/workflows/{workflow_id}")

@@ -25,7 +25,7 @@ async def client():
 
 @pytest.fixture
 async def workflow_id(client):
-    resp = await client.post("/api/workflows", json=SAMPLE_WORKFLOW)
+    resp = await client.post("/api/workflows", json={"workflow": SAMPLE_WORKFLOW})
     return resp.json()["id"]
 
 

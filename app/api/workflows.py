@@ -8,14 +8,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.models import WorkflowRecord
-from app.schemas import Workflow
+from app.schemas import UploadWorkflowRequest
 
 router = APIRouter(prefix="/api/workflows", tags=["workflows"])
 
 
 @router.post("", status_code=status.HTTP_201_CREATED)
-async def upload_workflow(workflow: Workflow, db: AsyncSession = Depends(get_db)):
+async def upload_workflow(body: UploadWorkflowRequest, db: AsyncSession = Depends(get_db)):
     """Upload a new workflow."""
+    workflow = body.workflow
     record = WorkflowRecord(
         name=workflow.name,
         description=workflow.description,

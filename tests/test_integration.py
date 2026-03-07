@@ -31,7 +31,7 @@ async def test_full_workflow_lifecycle(client):
     """Upload a workflow, schedule it, run it, check results."""
     # 1. Upload workflow from fixture file
     workflow_json = json.loads((FIXTURES / "sample-workflow.json").read_text())
-    resp = await client.post("/api/workflows", json=workflow_json)
+    resp = await client.post("/api/workflows", json={"workflow": workflow_json})
     assert resp.status_code == 201
     workflow_id = resp.json()["id"]
 
