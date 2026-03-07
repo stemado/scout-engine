@@ -1,6 +1,8 @@
 """scout-engine -- workflow execution service for Scout browser automation."""
 
+import asyncio
 import logging
+import sys
 from contextlib import asynccontextmanager
 
 import uvicorn
@@ -82,6 +84,39 @@ def cli():
         port=settings.port,
         reload=settings.debug,
     )
+
+
+async def _create_admin_key_impl(label: str) -> str:
+    """Create an admin API key and return the raw key."""
+    import app.database as app_database
+    from app.models import ApiKey
+    from app.services.keys import generate_api_key, hash_key
+
+    raw_key = generate_api_key()
+    async with app_database.async_session() as session:
+        key = ApiKey(
+            key_hash=hash_key(raw_key),
+            key_prefix=raw_key[:8],
+            label=label,
+            is_admin=True,
+        )
+        session.add(key)
+        await session.commit()
+    return raw_key
+
+
+def create_admin_key():
+    """CLI entry point: create an admin API key."""
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Create an admin API key")
+    parser.add_argument("--label", required=True, help="Label for the key (e.g. your name)")
+    args = parser.parse_args(sys.argv[1:])
+
+    raw_key = asyncio.run(_create_admin_key_impl(args.label))
+    print(f"\nAdmin API key created for '{args.label}':")
+    print(f"\n  {raw_key}\n")
+    print("Save this key — it cannot be retrieved again.")
 
 
 if __name__ == "__main__":
