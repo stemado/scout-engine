@@ -109,7 +109,7 @@ class ApiKeyMiddleware(BaseHTTPMiddleware):
                 )
                 await session.commit()
         except Exception:
-            logger.warning("Failed to update last_used_at for key %s", key_id)
+            logger.warning("Failed to update last_used_at for key %s", key_id, exc_info=True)
 
     async def _has_any_db_keys(self) -> bool | None:
         """Check if any API keys exist. Returns None if DB is unreachable."""

@@ -4,7 +4,7 @@ import uuid as _uuid
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -27,7 +27,7 @@ def _require_admin(request: Request):
 
 
 class CreateInviteRequest(BaseModel):
-    label: str
+    label: str = Field(min_length=1, max_length=255)
 
 
 class CreateInviteResponse(BaseModel):
@@ -160,6 +160,7 @@ async def list_keys(
 @router.delete("/keys/{key_id}", status_code=204)
 async def revoke_key(
     key_id: str,
+    request: Request,
     db: AsyncSession = Depends(get_db),
     _admin=Depends(_require_admin),
 ):
@@ -168,6 +169,12 @@ async def revoke_key(
         key_uuid = _uuid.UUID(key_id)
     except ValueError:
         raise HTTPException(status_code=404, detail="API key not found")
+
+    # Prevent self-revocation
+    caller_key_id = getattr(request.state, "api_key_id", None)
+    if caller_key_id and caller_key_id == key_uuid:
+        raise HTTPException(status_code=400, detail="Cannot revoke your own key")
+
     result = await db.execute(select(ApiKey).where(ApiKey.id == key_uuid))
     key = result.scalar_one_or_none()
     if key is None:
