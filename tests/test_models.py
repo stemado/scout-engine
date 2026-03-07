@@ -6,7 +6,7 @@ import pytest
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
-from app.models import Base, Execution, ExecutionStep, Schedule, WorkflowRecord
+from app.models import ApiKey, Base, Execution, ExecutionStep, InviteToken, Schedule, WorkflowRecord
 
 
 @pytest.fixture
@@ -97,3 +97,24 @@ def test_create_schedule(db):
     assert sched.id is not None
     assert sched.cron_expression == "0 6 * * *"
     assert sched.enabled is True
+
+
+def test_api_key_model_exists():
+    """ApiKey model should be importable and have expected columns."""
+    assert ApiKey.__tablename__ == "api_keys"
+    cols = {c.name for c in ApiKey.__table__.columns}
+    assert "key_hash" in cols
+    assert "key_prefix" in cols
+    assert "label" in cols
+    assert "is_admin" in cols
+    assert "revoked" in cols
+
+
+def test_invite_token_model_exists():
+    """InviteToken model should be importable and have expected columns."""
+    assert InviteToken.__tablename__ == "invite_tokens"
+    cols = {c.name for c in InviteToken.__table__.columns}
+    assert "token_hash" in cols
+    assert "label" in cols
+    assert "expires_at" in cols
+    assert "used_at" in cols
