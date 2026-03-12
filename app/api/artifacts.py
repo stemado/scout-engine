@@ -1,5 +1,6 @@
 """Artifact API -- retrieve screenshots and downloads from executions."""
 
+import asyncio
 import os
 from uuid import UUID
 
@@ -29,6 +30,7 @@ def _collect_artifacts(execution_id: str) -> list[dict]:
                     "filename": f,
                     "type": artifact_type,
                     "size_bytes": os.path.getsize(filepath),
+                    "url": f"/api/executions/{execution_id}/artifacts/{artifact_type}/{f}",
                 })
 
     return artifacts
@@ -37,5 +39,26 @@ def _collect_artifacts(execution_id: str) -> list[dict]:
 @router.get("/api/executions/{execution_id}/artifacts")
 async def list_artifacts(execution_id: UUID):
     """List all artifacts (screenshots + downloads) for an execution."""
-    artifacts = _collect_artifacts(str(execution_id))
+    artifacts = await asyncio.to_thread(_collect_artifacts, str(execution_id))
     return {"execution_id": str(execution_id), "artifacts": artifacts}
+
+
+@router.get("/api/executions/{execution_id}/artifacts/{artifact_type}/{filename:path}")
+async def download_artifact(execution_id: UUID, artifact_type: str, filename: str):
+    """Download a single artifact file."""
+    if artifact_type not in ("screenshot", "download"):
+        raise HTTPException(status_code=400, detail="Invalid artifact type. Must be 'screenshot' or 'download'.")
+
+    base_dir = settings.screenshot_dir if artifact_type == "screenshot" else settings.download_dir
+    filepath = os.path.join(base_dir, str(execution_id), filename)
+
+    # Path traversal guard: resolved path must stay within the execution's directory
+    real_filepath = os.path.realpath(filepath)
+    allowed_prefix = os.path.realpath(os.path.join(base_dir, str(execution_id)))
+    if not real_filepath.startswith(allowed_prefix):
+        raise HTTPException(status_code=400, detail="Invalid filename.")
+
+    if not await asyncio.to_thread(os.path.isfile, filepath):
+        raise HTTPException(status_code=404, detail="Artifact not found.")
+
+    return FileResponse(filepath)

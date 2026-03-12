@@ -29,6 +29,9 @@ class Settings(BaseSettings):
     download_dir: str = "./downloads"
     screenshot_dir: str = "./screenshots"
 
+    # Artifact retention (0 to disable cleanup)
+    artifact_retention_days: int = 30
+
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 
 

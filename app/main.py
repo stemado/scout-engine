@@ -29,11 +29,12 @@ async def lifespan(app: FastAPI):
     """Startup and shutdown events."""
     start_scheduler()
 
+    from app.database import async_session
+
     # Load existing enabled schedules from database so cron jobs survive restarts.
     # Wrapped in try/except so the app can still start on a fresh install where
     # the database has not been migrated yet.
     try:
-        from app.database import async_session
         from app.models import Schedule
         from sqlalchemy import select
 
@@ -49,6 +50,29 @@ async def lifespan(app: FastAPI):
             logger.info("Loaded %d schedule(s) from database", len(schedules))
     except Exception:
         logger.warning("Could not load schedules from database (migrations pending?)", exc_info=True)
+
+    # Register artifact cleanup job if retention is enabled
+    if settings.artifact_retention_days > 0:
+        from app.services.cleanup import cleanup_old_artifacts
+        from app.services.scheduler import scheduler
+
+        scheduler.add_job(
+            cleanup_old_artifacts,
+            trigger="cron",
+            hour=3,
+            id="artifact_cleanup",
+            kwargs={
+                "session_factory": async_session,
+                "retention_days": settings.artifact_retention_days,
+                "screenshot_dir": settings.screenshot_dir,
+                "download_dir": settings.download_dir,
+            },
+            replace_existing=True,
+        )
+        logger.info(
+            "Artifact cleanup scheduled (retention=%d days)",
+            settings.artifact_retention_days,
+        )
 
     yield
     shutdown_scheduler()

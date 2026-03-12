@@ -1,9 +1,10 @@
 """Execution API -- run workflows and track results."""
 
+import os
 from datetime import datetime, timezone
 from uuid import UUID
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -110,6 +111,7 @@ async def _run_execution(
 @router.post("/api/workflows/{workflow_id}/run", status_code=status.HTTP_202_ACCEPTED)
 async def run_workflow(
     workflow_id: UUID,
+    request: Request,
     background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
     session_factory: async_sessionmaker[AsyncSession] = Depends(get_session_factory),
@@ -128,6 +130,7 @@ async def run_workflow(
         workflow_id=workflow_id,
         status="pending",
         total_steps=len(workflow.steps),
+        created_by_key_id=getattr(request.state, "api_key_id", None),
     )
     db.add(execution)
     await db.commit()
@@ -199,6 +202,10 @@ async def get_execution(execution_id: UUID, db: AsyncSession = Depends(get_db)):
                 "status": s.status,
                 "elapsed_ms": s.elapsed_ms,
                 "error_message": s.error_message,
+                "screenshot_url": (
+                    f"/api/executions/{execution_id}/artifacts/screenshot/{os.path.basename(s.screenshot_path)}"
+                    if s.screenshot_path else None
+                ),
             }
             for s in steps
         ],

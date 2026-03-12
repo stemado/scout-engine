@@ -58,6 +58,9 @@ class Execution(Base):
     schedule_id: Mapped[uuid.UUID | None] = mapped_column(
         Uuid, ForeignKey("schedules.id", ondelete="SET NULL"), nullable=True
     )
+    created_by_key_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("api_keys.id", ondelete="SET NULL"), nullable=True
+    )
     status: Mapped[str] = mapped_column(
         String(20), default="pending", index=True
     )  # pending/running/completed/failed/cancelled

@@ -1,0 +1,39 @@
+{
+  "schema_version": "1.0",
+  "name": "pittstate-homepage-screenshot",
+  "description": "Navigate to Pittsburg State University and capture a screenshot of the home page",
+  "source": {
+    "tool": "scout",
+    "session_id": "ae51c197528b"
+  },
+  "variables": {},
+  "settings": {
+    "headless": true,
+    "human_mode": true,
+    "default_timeout_ms": 30000,
+    "step_delay_ms": 500,
+    "on_error": "stop"
+  },
+  "steps": [
+    {
+      "order": 1,
+      "name": "Navigate to Pittsburg State University",
+      "action": "navigate",
+      "value": "https://pittstate.edu"
+    },
+    {
+      "order": 2,
+      "name": "Wait for page to render",
+      "action": "wait",
+      "selector": "body",
+      "timeout_ms": 10000
+    },
+    {
+      "order": 3,
+      "name": "Capture screenshot to downloads",
+      "action": "run_js",
+      "value": "await new Promise(r => setTimeout(r, 1000))"
+    }
+  ],
+  "cleanup_steps": []
+}
