@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from uuid import UUID
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
+from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -16,6 +17,12 @@ from app.services.executor import ExecutionResult, execute_workflow
 from app.services.variables import UnresolvedVariableError, resolve_variables
 
 router = APIRouter(tags=["executions"])
+
+
+class RunWorkflowRequest(BaseModel):
+    """Optional request body for POST /api/workflows/{id}/run."""
+    variables: dict[str, str] = {}
+    callback_url: str | None = None
 
 
 async def _run_execution(
@@ -116,7 +123,21 @@ async def run_workflow(
     db: AsyncSession = Depends(get_db),
     session_factory: async_sessionmaker[AsyncSession] = Depends(get_session_factory),
 ):
-    """Submit a workflow for execution."""
+    """Submit a workflow for execution.
+
+    Accepts an optional JSON body with:
+    - callback_url: URL to POST execution results to when complete
+    - variables: variable overrides for the workflow
+    """
+    # Parse optional body (backward compatible — no body is valid)
+    body = RunWorkflowRequest()
+    try:
+        raw = await request.json()
+        if raw:
+            body = RunWorkflowRequest.model_validate(raw)
+    except Exception:
+        pass  # No body or invalid JSON — use defaults
+
     # Load workflow
     result = await db.execute(select(WorkflowRecord).where(WorkflowRecord.id == workflow_id))
     record = result.scalar_one_or_none()
@@ -131,13 +152,17 @@ async def run_workflow(
         status="pending",
         total_steps=len(workflow.steps),
         created_by_key_id=getattr(request.state, "api_key_id", None),
+        callback_url=body.callback_url,
     )
     db.add(execution)
     await db.commit()
     await db.refresh(execution)
 
     # Launch background execution with the session factory
-    background_tasks.add_task(_run_execution, execution.id, workflow, session_factory)
+    overrides = body.variables if body.variables else None
+    background_tasks.add_task(
+        _run_execution, execution.id, workflow, session_factory, overrides
+    )
 
     return {"execution_id": str(execution.id), "status": "pending"}
 
@@ -192,6 +217,7 @@ async def get_execution(execution_id: UUID, db: AsyncSession = Depends(get_db)):
         "passed_steps": execution.passed_steps,
         "failed_steps": execution.failed_steps,
         "error_message": execution.error_message,
+        "callback_url": execution.callback_url,
         "started_at": execution.started_at.isoformat() if execution.started_at else None,
         "finished_at": execution.finished_at.isoformat() if execution.finished_at else None,
         "steps": [
