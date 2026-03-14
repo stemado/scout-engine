@@ -75,6 +75,7 @@ class Execution(Base):
     failed_steps: Mapped[int] = mapped_column(Integer, default=0)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     variables_used: Mapped[dict | None] = mapped_column(JsonVariant, nullable=True)
+    callback_url: Mapped[str | None] = mapped_column(String(2048), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )
