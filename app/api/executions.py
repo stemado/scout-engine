@@ -88,8 +88,10 @@ async def _run_execution(
         # Respect external cancellation: stop_execution may have already
         # written "cancelled" to the DB while we were running — preserve that
         # status but always write the factual telemetry (counts, timestamps).
+        final_status = execution.status  # preserve cancelled if set externally
         if execution.status != "cancelled":
             execution.status = exec_result.status
+            final_status = exec_result.status
             if exec_result.error:
                 execution.error_message = exec_result.error
 
@@ -98,6 +100,11 @@ async def _run_execution(
         execution.passed_steps = exec_result.passed
         execution.failed_steps = exec_result.failed
         execution.finished_at = datetime.now(timezone.utc)
+
+        # Capture callback_url and timestamps before closing the session
+        callback_url = execution.callback_url or settings.webhook_url or None
+        started_at_iso = execution.started_at.isoformat() if execution.started_at else ""
+        finished_at_iso = execution.finished_at.isoformat() if execution.finished_at else ""
 
         for step_result in exec_result.steps:
             step_record = ExecutionStep(
@@ -113,6 +120,22 @@ async def _run_execution(
             db.add(step_record)
 
         await db.commit()
+
+    # --- Webhook callback (fire-and-forget, after DB commit) ---
+    if callback_url:
+        from app.services.webhook import send_webhook_callback
+
+        await send_webhook_callback(
+            callback_url=callback_url,
+            execution_id=str(execution_id),
+            status=final_status,
+            steps_passed=exec_result.passed,
+            steps_failed=exec_result.failed,
+            error_message=exec_result.error,
+            started_at=started_at_iso,
+            finished_at=finished_at_iso,
+            duration_ms=exec_result.total_ms,
+        )
 
 
 @router.post("/api/workflows/{workflow_id}/run", status_code=status.HTTP_202_ACCEPTED)
