@@ -1,5 +1,6 @@
 """Execution API -- run workflows and track results."""
 
+import asyncio
 import os
 from datetime import datetime, timezone
 from uuid import UUID
@@ -18,6 +19,33 @@ from app.services.fragments import resolve_fragments
 from app.services.variables import UnresolvedVariableError, resolve_variables
 
 router = APIRouter(tags=["executions"])
+
+
+def _derive_outputs(execution_id: str) -> dict | None:
+    """Expose downloaded files as workflow outputs.
+
+    Contract consumed by AntFarm.Census ScoutEngineFileAcquisitionService:
+    outputs.file_path = newest file in this execution's download dir.
+    Downloads land in settings.download_dir/<execution_id>/ (GUID filenames)
+    and are not otherwise recorded on the Execution row, so scan the dir.
+    """
+    from app.config import settings
+
+    exec_dir = os.path.join(settings.download_dir, execution_id)
+    if not os.path.isdir(exec_dir):
+        return None
+    files = [
+        os.path.join(exec_dir, f)
+        for f in os.listdir(exec_dir)
+        if os.path.isfile(os.path.join(exec_dir, f))
+    ]
+    if not files:
+        return None
+    files.sort(key=os.path.getmtime)
+    return {
+        "file_path": files[-1],
+        "download_files": [os.path.basename(f) for f in files],
+    }
 
 
 class RunWorkflowRequest(BaseModel):
@@ -238,6 +266,12 @@ async def get_execution(execution_id: UUID, db: AsyncSession = Depends(get_db)):
     )
     steps = steps_result.scalars().all()
 
+    # Merge DB step outputs (output_var results) with derived download info.
+    # Downloads win the file_path/download_files keys; outputs is null only
+    # when both sources are empty.
+    derived = await asyncio.to_thread(_derive_outputs, str(execution_id))
+    merged_outputs = {**(execution.outputs or {}), **(derived or {})}
+
     return {
         "id": str(execution.id),
         "workflow_id": str(execution.workflow_id),
@@ -247,7 +281,7 @@ async def get_execution(execution_id: UUID, db: AsyncSession = Depends(get_db)):
         "failed_steps": execution.failed_steps,
         "error_message": execution.error_message,
         "callback_url": execution.callback_url,
-        "outputs": execution.outputs,
+        "outputs": merged_outputs or None,
         "started_at": execution.started_at.isoformat() if execution.started_at else None,
         "finished_at": execution.finished_at.isoformat() if execution.finished_at else None,
         "steps": [
