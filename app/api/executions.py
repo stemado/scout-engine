@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from uuid import UUID
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
+from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -13,9 +14,16 @@ from app.models import Execution, ExecutionStep, WorkflowRecord
 from app.schemas import Workflow
 from app.services.cancellation import cancel, register, unregister
 from app.services.executor import ExecutionResult, execute_workflow
+from app.services.fragments import resolve_fragments
 from app.services.variables import UnresolvedVariableError, resolve_variables
 
 router = APIRouter(tags=["executions"])
+
+
+class RunWorkflowRequest(BaseModel):
+    """Optional request body for POST /api/workflows/{id}/run."""
+    variables: dict[str, str] = {}
+    callback_url: str | None = None
 
 
 async def _run_execution(
@@ -81,8 +89,10 @@ async def _run_execution(
         # Respect external cancellation: stop_execution may have already
         # written "cancelled" to the DB while we were running — preserve that
         # status but always write the factual telemetry (counts, timestamps).
+        final_status = execution.status  # preserve cancelled if set externally
         if execution.status != "cancelled":
             execution.status = exec_result.status
+            final_status = exec_result.status
             if exec_result.error:
                 execution.error_message = exec_result.error
 
@@ -91,6 +101,15 @@ async def _run_execution(
         execution.passed_steps = exec_result.passed
         execution.failed_steps = exec_result.failed
         execution.finished_at = datetime.now(timezone.utc)
+
+        # Capture callback_url and timestamps before closing the session
+        callback_url = execution.callback_url or settings.webhook_url or None
+        started_at_iso = execution.started_at.isoformat() if execution.started_at else ""
+        finished_at_iso = execution.finished_at.isoformat() if execution.finished_at else ""
+
+        # Persist runtime outputs (from extract/run_js with output_var)
+        if exec_result.outputs:
+            execution.outputs = exec_result.outputs
 
         for step_result in exec_result.steps:
             step_record = ExecutionStep(
@@ -107,6 +126,22 @@ async def _run_execution(
 
         await db.commit()
 
+    # --- Webhook callback (fire-and-forget, after DB commit) ---
+    if callback_url:
+        from app.services.webhook import send_webhook_callback
+
+        await send_webhook_callback(
+            callback_url=callback_url,
+            execution_id=str(execution_id),
+            status=final_status,
+            steps_passed=exec_result.passed,
+            steps_failed=exec_result.failed,
+            error_message=exec_result.error,
+            started_at=started_at_iso,
+            finished_at=finished_at_iso,
+            duration_ms=exec_result.total_ms,
+        )
+
 
 @router.post("/api/workflows/{workflow_id}/run", status_code=status.HTTP_202_ACCEPTED)
 async def run_workflow(
@@ -116,14 +151,29 @@ async def run_workflow(
     db: AsyncSession = Depends(get_db),
     session_factory: async_sessionmaker[AsyncSession] = Depends(get_session_factory),
 ):
-    """Submit a workflow for execution."""
+    """Submit a workflow for execution.
+
+    Accepts an optional JSON body with:
+    - callback_url: URL to POST execution results to when complete
+    - variables: variable overrides for the workflow
+    """
+    # Parse optional body (backward compatible — no body is valid)
+    body = RunWorkflowRequest()
+    try:
+        raw = await request.json()
+        if raw:
+            body = RunWorkflowRequest.model_validate(raw)
+    except Exception:
+        pass  # No body or invalid JSON — use defaults
+
     # Load workflow
     result = await db.execute(select(WorkflowRecord).where(WorkflowRecord.id == workflow_id))
     record = result.scalar_one_or_none()
     if not record:
         raise HTTPException(status_code=404, detail="Workflow not found")
 
-    workflow = Workflow.model_validate(record.workflow_json)
+    resolved_json = await resolve_fragments(record.workflow_json, db)
+    workflow = Workflow.model_validate(resolved_json)
 
     # Create execution record
     execution = Execution(
@@ -131,13 +181,17 @@ async def run_workflow(
         status="pending",
         total_steps=len(workflow.steps),
         created_by_key_id=getattr(request.state, "api_key_id", None),
+        callback_url=body.callback_url,
     )
     db.add(execution)
     await db.commit()
     await db.refresh(execution)
 
     # Launch background execution with the session factory
-    background_tasks.add_task(_run_execution, execution.id, workflow, session_factory)
+    overrides = body.variables if body.variables else None
+    background_tasks.add_task(
+        _run_execution, execution.id, workflow, session_factory, overrides
+    )
 
     return {"execution_id": str(execution.id), "status": "pending"}
 
@@ -192,6 +246,8 @@ async def get_execution(execution_id: UUID, db: AsyncSession = Depends(get_db)):
         "passed_steps": execution.passed_steps,
         "failed_steps": execution.failed_steps,
         "error_message": execution.error_message,
+        "callback_url": execution.callback_url,
+        "outputs": execution.outputs,
         "started_at": execution.started_at.isoformat() if execution.started_at else None,
         "finished_at": execution.finished_at.isoformat() if execution.finished_at else None,
         "steps": [

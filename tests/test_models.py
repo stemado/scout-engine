@@ -118,3 +118,35 @@ def test_invite_token_model_exists():
     assert "label" in cols
     assert "expires_at" in cols
     assert "used_at" in cols
+
+
+def test_execution_has_callback_url_field(db):
+    """Execution should accept and store a callback_url."""
+    wf = WorkflowRecord(name="test-cb", schema_version="1.0", workflow_json={})
+    db.add(wf)
+    db.commit()
+
+    ex = Execution(
+        workflow_id=wf.id,
+        status="pending",
+        callback_url="http://sentinel:8100/api/callbacks/test-123",
+    )
+    db.add(ex)
+    db.commit()
+    db.refresh(ex)
+
+    assert ex.callback_url == "http://sentinel:8100/api/callbacks/test-123"
+
+
+def test_execution_callback_url_defaults_to_none(db):
+    """Execution callback_url should default to None when not provided."""
+    wf = WorkflowRecord(name="test-cb-default", schema_version="1.0", workflow_json={})
+    db.add(wf)
+    db.commit()
+
+    ex = Execution(workflow_id=wf.id, status="pending")
+    db.add(ex)
+    db.commit()
+    db.refresh(ex)
+
+    assert ex.callback_url is None

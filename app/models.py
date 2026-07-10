@@ -3,7 +3,7 @@
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, Integer, String, Text, Uuid
+from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, Integer, String, Text, Uuid, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -75,6 +75,8 @@ class Execution(Base):
     failed_steps: Mapped[int] = mapped_column(Integer, default=0)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     variables_used: Mapped[dict | None] = mapped_column(JsonVariant, nullable=True)
+    callback_url: Mapped[str | None] = mapped_column(String(2048), nullable=True)
+    outputs: Mapped[dict | None] = mapped_column(JsonVariant, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )
@@ -188,3 +190,27 @@ class InviteToken(Base):
     )
 
     created_by_key: Mapped["ApiKey"] = relationship(back_populates="invites_created")
+
+
+class WorkflowFragment(Base):
+    """A reusable step sequence that can be included in multiple workflows."""
+
+    __tablename__ = "workflow_fragments"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    fragment_id: Mapped[str] = mapped_column(
+        String(100), unique=True, nullable=False, index=True
+    )
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    variables: Mapped[dict | None] = mapped_column(JsonVariant, nullable=True)
+    steps: Mapped[list] = mapped_column(JsonVariant, nullable=False)
+    version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )

@@ -45,9 +45,11 @@ class WorkflowStep(BaseModel):
     order: int = Field(ge=1)
     name: str
     action: Literal[
-        "navigate", "click", "type", "select", "scroll", "wait",
+        "navigate", "navigate_new_tab", "click", "type", "select", "scroll", "wait",
         "wait_for_download", "wait_for_response",
         "press_key", "hover", "clear", "run_js", "handoff",
+        "extract", "conditional", "loop", "fill_secret",
+        "upload_file", "http_request", "file_op",
     ]
 
     # Common optional fields
@@ -63,6 +65,31 @@ class WorkflowStep(BaseModel):
     download_dir: str | None = None            # wait_for_download
     url_pattern: str | None = None             # wait_for_response
     method: str | None = None                  # wait_for_response
+
+    # Runtime context fields (Phase 1: RuntimeContext + extract)
+    output_var: str | None = None              # store step result in context
+
+    # Control flow fields (Phase 2+)
+    condition: str | None = None               # conditional: expression to evaluate
+    compare_to: str | None = None              # conditional: value to compare against
+    skip_steps: int | None = None              # conditional: steps to skip if false
+    jump_to: int | None = None                 # conditional: step index to jump to
+    loop_var: str | None = None                # loop: variable name for current item
+    loop_index_var: str | None = None          # loop: variable name for current index
+    loop_steps: int | None = None              # loop: number of steps in loop body
+
+    # File/HTTP operation fields (Phase 2+)
+    operation: str | None = None               # file_op: read/write/append/delete
+    source: str | None = None                  # file_op/http_request: source path or URL
+    destination: str | None = None             # file_op: destination path
+    content: str | None = None                 # file_op: content to write
+    pattern: str | None = None                 # file_op: regex pattern for extraction
+    headers: dict[str, str] | None = None      # http_request: HTTP headers
+    body: str | None = None                    # http_request: request body
+    auth: str | None = None                    # http_request: auth token/scheme
+
+    # Fragment resolution (Phase 3)
+    include: str | None = None                 # reference to a reusable step fragment
 
 
 class WorkflowSource(BaseModel):

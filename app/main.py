@@ -11,6 +11,7 @@ from fastapi import FastAPI
 from .api.artifacts import router as artifacts_router
 from .api.auth import router as auth_router
 from .api.executions import router as executions_router
+from .api.fragments import router as fragments_router
 from .api.schedules import router as schedules_router
 from .api.workflows import router as workflows_router
 from .auth import ApiKeyMiddleware
@@ -91,6 +92,7 @@ app.add_middleware(ApiKeyMiddleware)
 app.include_router(artifacts_router)
 app.include_router(auth_router)
 app.include_router(executions_router)
+app.include_router(fragments_router)
 app.include_router(schedules_router)
 app.include_router(workflows_router)
 

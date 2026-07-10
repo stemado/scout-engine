@@ -218,6 +218,37 @@ async def test_resume_unknown_execution(client):
 
 
 @pytest.mark.asyncio
+async def test_run_workflow_accepts_callback_url(client, workflow_id):
+    """POST /api/workflows/{id}/run with callback_url stores it on execution."""
+    mock_result = ExecutionResult(status="completed", passed=1, failed=0, total_ms=500, steps=[])
+    with patch("app.api.executions._run_execution", new_callable=AsyncMock):
+        resp = await client.post(
+            f"/api/workflows/{workflow_id}/run",
+            json={"callback_url": "http://sentinel:8100/api/callbacks/test-123"},
+        )
+    assert resp.status_code == 202
+    execution_id = resp.json()["execution_id"]
+
+    # Verify callback_url stored on execution
+    exec_resp = await client.get(f"/api/executions/{execution_id}")
+    assert exec_resp.json()["callback_url"] == "http://sentinel:8100/api/callbacks/test-123"
+
+
+@pytest.mark.asyncio
+async def test_run_workflow_without_callback_url_backward_compatible(client, workflow_id):
+    """Omitting callback_url is valid — no body or empty body both work."""
+    mock_result = ExecutionResult(status="completed", passed=1, failed=0, total_ms=500, steps=[])
+    with patch("app.api.executions._run_execution", new_callable=AsyncMock):
+        # No body at all (backward compatible)
+        resp = await client.post(f"/api/workflows/{workflow_id}/run")
+    assert resp.status_code == 202
+
+    execution_id = resp.json()["execution_id"]
+    exec_resp = await client.get(f"/api/executions/{execution_id}")
+    assert exec_resp.json()["callback_url"] is None
+
+
+@pytest.mark.asyncio
 async def test_browser_session_includes_paused_state(client, workflow_id):
     """GET /browser should include state and paused_at_step when paused."""
     from app.services.browser_session import (

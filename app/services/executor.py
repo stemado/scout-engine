@@ -8,19 +8,25 @@ pool via asyncio.to_thread().
 from __future__ import annotations
 
 import asyncio
+import glob as glob_module
 import json
 import logging
 import os
 import queue
 import random
 import re
+import shutil
 import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from typing import Any
+
+import requests as _requests_lib
 
 from app.schemas import Workflow, WorkflowStep
 from app.services.network_monitor import NetworkMonitor
+from app.services.variables import resolve_step_runtime
 
 
 @dataclass
@@ -34,6 +40,7 @@ class StepResult:
     elapsed_ms: int = 0
     error: str | None = None
     screenshot_path: str | None = None
+    output_data: Any | None = None
 
 
 @dataclass
@@ -46,6 +53,28 @@ class ExecutionResult:
     total_ms: int = 0
     steps: list[StepResult] = field(default_factory=list)
     error: str | None = None
+    outputs: dict[str, Any] | None = None
+
+
+@dataclass
+class RuntimeContext:
+    """Inter-step data flow context that travels through execution."""
+
+    step_outputs: dict[str, Any] = field(default_factory=dict)
+    loop_stack: list = field(default_factory=list)  # list[LoopFrame]
+    files: dict[str, str] = field(default_factory=dict)
+
+
+@dataclass
+class LoopFrame:
+    """State for a single loop iteration."""
+
+    items: list
+    current_index: int
+    loop_var: str
+    loop_index_var: str | None
+    body_start: int
+    body_end: int
 
 
 def _create_driver(headless: bool):
@@ -225,10 +254,12 @@ def _execute_step_sync(
     monitor: NetworkMonitor | None = None,
     human_mode: bool = False,
     screenshot_dir: str | None = None,
+    context: RuntimeContext | None = None,
 ) -> StepResult:
     """Execute a single step synchronously. Called from thread pool."""
     start = time.perf_counter()
     error = None
+    output_data = None
 
     try:
         target = _resolve_target(driver, step.frame_context)
@@ -237,6 +268,13 @@ def _execute_step_sync(
         match step.action:
             case "navigate":
                 driver.get(step.value)
+
+            case "navigate_new_tab":
+                # Opens the URL in a new tab and switches driver focus to it.
+                # Needed after a cross-domain navigate, where staying in the
+                # original tab breaks CDP DOM sync (observed with Google warmup
+                # followed by a different-origin navigate).
+                driver.open_link_in_new_tab(step.value)
 
             case "click":
                 if step.selector and _selector_targets_iframe(step.selector):
@@ -347,7 +385,140 @@ def _execute_step_sync(
                 target.clear(step.selector)
 
             case "run_js":
-                target.run_js(step.value)
+                ret = target.run_js(step.value)
+                if step.output_var:
+                    output_data = ret
+
+            case "extract":
+                if not step.output_var:
+                    raise ValueError("extract action requires output_var field")
+                result_value = target.run_js(step.value)
+                output_data = result_value
+
+            case "conditional":
+                val = step.value
+                cond = step.condition or "truthy"
+                condition_met = False
+                match cond:
+                    case "truthy":
+                        condition_met = bool(
+                            val is not None
+                            and str(val).lower() not in ("", "false", "null", "0")
+                        )
+                    case "falsy":
+                        condition_met = (
+                            val is None
+                            or str(val).lower() in ("", "false", "null", "0")
+                        )
+                    case "equals":
+                        condition_met = str(val) == str(step.compare_to)
+                    case "contains":
+                        condition_met = str(step.compare_to) in str(val)
+                    case "matches":
+                        condition_met = re.search(str(step.compare_to), str(val)) is not None
+                    case _:
+                        raise ValueError(f"Unknown condition: {cond}")
+                output_data = {
+                    "condition_met": condition_met,
+                    "skip_steps": step.skip_steps,
+                    "jump_to": step.jump_to,
+                }
+
+            case "loop":
+                items = step.value
+                if isinstance(items, str):
+                    try:
+                        items = json.loads(items)
+                    except (json.JSONDecodeError, TypeError):
+                        items = []
+                if not isinstance(items, list):
+                    items = [items] if items is not None else []
+                output_data = {
+                    "items": items,
+                    "loop_var": step.loop_var,
+                    "loop_index_var": step.loop_index_var,
+                    "loop_steps": step.loop_steps,
+                }
+
+            case "fill_secret":
+                if step.clear_first:
+                    target.clear(step.selector)
+                target.type(step.selector, step.value)
+                output_data = {"chars_typed": len(step.value) if step.value else 0}
+
+            case "upload_file":
+                # Use CDP to set files on a file input element
+                file_path = step.value
+                elem = target.select(step.selector)
+                if hasattr(elem, "upload") and callable(getattr(elem, "upload")):
+                    elem.upload(file_path)
+                else:
+                    # Fallback: use CDP File.setFileInputFiles via run_js
+                    # Get the backend node id
+                    from botasaurus_driver import cdp
+                    node_info = driver.run_cdp_command(
+                        cdp.dom.get_document(depth=0)
+                    )
+                    js_selector = json.dumps(step.selector)
+                    node_id = driver.run_js(
+                        f"return document.querySelector({js_selector})"
+                    )
+                    if node_id is None:
+                        raise ValueError(f"File input not found: {step.selector}")
+                    # Use Input.dispatchDragEvent or set via JS
+                    driver.run_cdp_command(
+                        cdp.dom.set_file_input_files(
+                            files=[os.path.realpath(file_path)],
+                            object_id=node_id,
+                        )
+                    )
+                output_data = {"file": file_path}
+
+            case "http_request":
+                method = (step.method or "GET").upper()
+                headers = step.headers or {}
+                timeout_val = (step.timeout_ms or 30000) / 1000
+                auth = None
+                if step.auth and step.auth.startswith("basic:"):
+                    parts = step.auth.split(":", 2)
+                    if len(parts) >= 3:
+                        auth = (parts[1], parts[2])
+                resp = _requests_lib.request(
+                    method, step.value,
+                    headers=headers, data=step.body,
+                    auth=auth, timeout=timeout_val,
+                )
+                try:
+                    resp_data = resp.json()
+                except (ValueError, TypeError):
+                    resp_data = resp.text
+                output_data = {
+                    "status_code": resp.status_code,
+                    "body": resp_data,
+                    "headers": dict(resp.headers),
+                }
+
+            case "file_op":
+                match step.operation:
+                    case "mkdir":
+                        os.makedirs(step.destination, exist_ok=True)
+                        output_data = step.destination
+                    case "copy":
+                        shutil.copy2(step.source, step.destination)
+                        output_data = step.destination
+                    case "write":
+                        os.makedirs(os.path.dirname(step.destination), exist_ok=True)
+                        with open(step.destination, "w", encoding="utf-8") as f:
+                            f.write(step.content or "")
+                        output_data = step.destination
+                    case "glob":
+                        matches = glob_module.glob(step.pattern, root_dir=step.source)
+                        output_data = json.dumps([os.path.join(step.source, m) for m in matches])
+                    case "list":
+                        entries = os.listdir(step.source)
+                        output_data = json.dumps([os.path.join(step.source, e) for e in sorted(entries)])
+                    case _:
+                        raise ValueError(f"Unknown file_op operation: {step.operation}")
 
             case "wait_for_download":
                 timeout = step.timeout_ms or default_timeout
@@ -422,6 +593,7 @@ def _execute_step_sync(
         elapsed_ms=elapsed,
         error=error,
         screenshot_path=screenshot_path,
+        output_data=output_data if error is None else None,
     )
 
 
@@ -461,6 +633,7 @@ async def execute_workflow(
     passed = 0
     failed = 0
     cancelled = False
+    context = RuntimeContext()
 
     def _run_sync():
         """Synchronous execution in thread pool."""
@@ -521,6 +694,9 @@ async def execute_workflow(
             _retrying_after_pause = False
             while step_idx < len(workflow.steps):
                 step = workflow.steps[step_idx]
+
+                # Resolve runtime variables (from extract/http_request outputs)
+                step = resolve_step_runtime(step, context)
 
                 # Cooperative cancellation -- check before each step
                 if cancel_event and cancel_event.is_set():
@@ -609,8 +785,26 @@ async def execute_workflow(
                     driver, step, default_timeout,
                     monitor=monitor, human_mode=human_mode,
                     screenshot_dir=effective_screenshot_dir,
+                    context=context,
                 )
                 results.append(result)
+
+                # Capture output_var into runtime context
+                if step.output_var and result.status == "passed":
+                    context.step_outputs[step.output_var] = result.output_data
+                    # For http_request, also store the body as a JSON string
+                    # under "{output_var}_body" so it can be interpolated into
+                    # browser JS via ${var_body} and parsed with JSON.parse().
+                    if (
+                        step.action == "http_request"
+                        and isinstance(result.output_data, dict)
+                        and "body" in result.output_data
+                    ):
+                        body = result.output_data["body"]
+                        if isinstance(body, (dict, list)):
+                            context.step_outputs[f"{step.output_var}_body"] = json.dumps(body)
+                        else:
+                            context.step_outputs[f"{step.output_var}_body"] = str(body)
 
                 if _bs_update_step:
                     _bs_update_step(execution_id, None)
@@ -654,6 +848,60 @@ async def execute_workflow(
                         if policy == "stop":
                             break
 
+                # --- Conditional skip/jump logic ---
+                if (
+                    step.action == "conditional"
+                    and result.status == "passed"
+                    and result.output_data
+                ):
+                    od = result.output_data
+                    if od.get("condition_met"):
+                        if od.get("skip_steps"):
+                            step_idx += od["skip_steps"]
+                        elif od.get("jump_to") is not None:
+                            step_idx = od["jump_to"] - 1
+
+                # --- Loop initiation logic ---
+                if (
+                    step.action == "loop"
+                    and result.status == "passed"
+                    and result.output_data
+                ):
+                    od = result.output_data
+                    items = od.get("items", [])
+                    loop_steps = od.get("loop_steps") or 0
+                    loop_var = od.get("loop_var", "_item")
+                    loop_index_var = od.get("loop_index_var")
+                    if not items:
+                        # Empty list: skip the body
+                        step_idx += loop_steps
+                    else:
+                        frame = LoopFrame(
+                            items=items,
+                            current_index=0,
+                            loop_var=loop_var,
+                            loop_index_var=loop_index_var,
+                            body_start=step_idx + 1,
+                            body_end=step_idx + loop_steps,
+                        )
+                        context.loop_stack.append(frame)
+                        context.step_outputs[loop_var] = items[0]
+                        if loop_index_var:
+                            context.step_outputs[loop_index_var] = 0
+
+                # --- Loop iteration check (after every step) ---
+                if context.loop_stack and step.action != "loop":
+                    frame = context.loop_stack[-1]
+                    if step_idx == frame.body_end:
+                        frame.current_index += 1
+                        if frame.current_index < len(frame.items):
+                            context.step_outputs[frame.loop_var] = frame.items[frame.current_index]
+                            if frame.loop_index_var:
+                                context.step_outputs[frame.loop_index_var] = frame.current_index
+                            step_idx = frame.body_start - 1
+                        else:
+                            context.loop_stack.pop()
+
                 # Apply delay between steps (not after the last one)
                 if step_idx < len(workflow.steps) - 1:
                     if human_mode:
@@ -696,4 +944,5 @@ async def execute_workflow(
         failed=failed,
         total_ms=total_ms,
         steps=results,
+        outputs=dict(context.step_outputs) if context.step_outputs else None,
     )
