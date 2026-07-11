@@ -1,0 +1,44 @@
+{
+  "schema_version": "1.0",
+  "name": "smoke-file-download",
+  "description": "Hermetic smoke test: open a blank page, generate a small CSV in-browser, and trigger a download. Proves the executor's download routing and the outputs.file_path / outputs.download_files derivation over the live API. No external portal or credentials.",
+  "source": {
+    "tool": "scout",
+    "session_id": ""
+  },
+  "variables": {
+    "RUN_DATE": {
+      "type": "string",
+      "default": "1970-01-01",
+      "description": "Date stamp interpolated into the generated CSV filename."
+    }
+  },
+  "settings": {
+    "headless": true,
+    "human_mode": false,
+    "default_timeout_ms": 30000,
+    "step_delay_ms": 500,
+    "on_error": "stop"
+  },
+  "steps": [
+    {
+      "order": 1,
+      "name": "Open a blank page",
+      "action": "navigate",
+      "value": "about:blank"
+    },
+    {
+      "order": 2,
+      "name": "Generate a CSV in-browser and trigger a download",
+      "action": "run_js",
+      "value": "const blob = new Blob(['col_a,col_b\\n1,2\\n'], {type: 'text/csv'}); const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'smoke_${RUN_DATE}.csv'; document.body.appendChild(a); a.click();"
+    },
+    {
+      "order": 3,
+      "name": "Wait for the download to land on disk",
+      "action": "wait",
+      "value": "3000"
+    }
+  ],
+  "cleanup_steps": []
+}
