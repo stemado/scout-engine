@@ -25,18 +25,21 @@ def _derive_outputs(execution_id: str) -> dict | None:
     """Expose downloaded files as workflow outputs.
 
     Contract consumed by AntFarm.Census ScoutEngineFileAcquisitionService:
-    outputs.file_path = newest FINALIZED file in this execution's download dir,
-    preferring finalized files over Chrome ``.crdownload`` partials. In the
-    headless setup, in-browser blob downloads never rename off ``.crdownload``
-    even though their bytes are complete, so a newer partial must not shadow a
-    finalized export. When ONLY partials exist, fall back to the newest partial
-    (no hard skip) so a blob-only workflow still yields a usable path.
+    outputs.file_path = ABSOLUTE path of the newest FINALIZED file in this
+    execution's download dir, preferring finalized files over Chrome
+    ``.crdownload`` partials. In the headless setup, in-browser blob downloads
+    never rename off ``.crdownload`` even though their bytes are complete, so a
+    newer partial must not shadow a finalized export. When ONLY partials exist,
+    fall back to the newest partial (no hard skip) so a blob-only workflow still
+    yields a usable path. The path is absolutized because ``download_dir``
+    defaults to a relative ``./downloads`` and a different-CWD consumer (the
+    .NET client) cannot resolve a relative path.
     Downloads land in settings.download_dir/<execution_id>/ (GUID filenames)
     and are not otherwise recorded on the Execution row, so scan the dir.
     """
     from app.config import settings
 
-    exec_dir = os.path.join(settings.download_dir, execution_id)
+    exec_dir = os.path.abspath(os.path.join(settings.download_dir, execution_id))
     if not os.path.isdir(exec_dir):
         return None
     files = [

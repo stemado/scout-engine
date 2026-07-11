@@ -125,3 +125,25 @@ async def test_outputs_falls_back_to_partial_when_only_crdownload(tmp_path, monk
     body = resp.json()
     assert body["outputs"]["file_path"] == str(partial)
     assert body["outputs"]["download_files"] == ["partial.crdownload"]
+
+
+async def test_outputs_file_path_is_absolute_with_relative_download_dir(tmp_path, monkeypatch):
+    """file_path must be absolute even when download_dir is configured relative.
+
+    The engine's default download_dir is relative (``./downloads``); a
+    different-CWD consumer (the .NET client) can't resolve a relative path.
+    """
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(settings, "download_dir", "./dl_rel")
+    execution = await _seed_completed_execution()
+    exec_dir = tmp_path / "dl_rel" / str(execution.id)
+    exec_dir.mkdir(parents=True)
+    downloaded = exec_dir / "export.csv"
+    downloaded.write_text("a,b\n1,2\n")
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.get(f"/api/executions/{execution.id}")
+
+    file_path = resp.json()["outputs"]["file_path"]
+    assert os.path.isabs(file_path)
+    assert os.path.isfile(file_path)
