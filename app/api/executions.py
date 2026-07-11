@@ -25,7 +25,12 @@ def _derive_outputs(execution_id: str) -> dict | None:
     """Expose downloaded files as workflow outputs.
 
     Contract consumed by AntFarm.Census ScoutEngineFileAcquisitionService:
-    outputs.file_path = newest file in this execution's download dir.
+    outputs.file_path = newest FINALIZED file in this execution's download dir,
+    preferring finalized files over Chrome ``.crdownload`` partials. In the
+    headless setup, in-browser blob downloads never rename off ``.crdownload``
+    even though their bytes are complete, so a newer partial must not shadow a
+    finalized export. When ONLY partials exist, fall back to the newest partial
+    (no hard skip) so a blob-only workflow still yields a usable path.
     Downloads land in settings.download_dir/<execution_id>/ (GUID filenames)
     and are not otherwise recorded on the Execution row, so scan the dir.
     """
@@ -42,8 +47,11 @@ def _derive_outputs(execution_id: str) -> dict | None:
     if not files:
         return None
     files.sort(key=os.path.getmtime)
+    finalized = [f for f in files if not f.endswith(".crdownload")]
+    # Prefer newest finalized file; fall back to newest partial if none finalized.
+    chosen = finalized[-1] if finalized else files[-1]
     return {
-        "file_path": files[-1],
+        "file_path": chosen,
         "download_files": [os.path.basename(f) for f in files],
     }
 

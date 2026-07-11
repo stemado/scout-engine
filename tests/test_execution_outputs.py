@@ -83,3 +83,45 @@ async def test_outputs_merge_preserves_step_outputs_and_adds_downloads(tmp_path,
     assert body["outputs"]["scraped_value"] == "abc"
     assert body["outputs"]["file_path"] == str(downloaded)
     assert body["outputs"]["download_files"] == ["export.csv"]
+
+
+async def test_outputs_prefers_finalized_over_crdownload_partial(tmp_path, monkeypatch):
+    """A newer .crdownload partial must not win over a finalized file.
+
+    Headless in-browser blob downloads never rename off .crdownload, so
+    file_path must point at the finalized export; the partial still appears
+    in download_files (full inventory preserved).
+    """
+    monkeypatch.setattr(settings, "download_dir", str(tmp_path))
+    execution = await _seed_completed_execution()
+    exec_dir = tmp_path / str(execution.id)
+    exec_dir.mkdir()
+    finalized = exec_dir / "export.csv"
+    finalized.write_text("a,b\n1,2\n")
+    partial = exec_dir / "data.crdownload"
+    partial.write_text("a,b\n3,4\n")
+    os.utime(finalized, (1_700_000_000, 1_700_000_000))  # force finalized OLDER than partial
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.get(f"/api/executions/{execution.id}")
+
+    body = resp.json()
+    assert body["outputs"]["file_path"] == str(finalized)
+    assert sorted(body["outputs"]["download_files"]) == ["data.crdownload", "export.csv"]
+
+
+async def test_outputs_falls_back_to_partial_when_only_crdownload(tmp_path, monkeypatch):
+    """When only partials exist, fall back to the newest partial (no hard skip)."""
+    monkeypatch.setattr(settings, "download_dir", str(tmp_path))
+    execution = await _seed_completed_execution()
+    exec_dir = tmp_path / str(execution.id)
+    exec_dir.mkdir()
+    partial = exec_dir / "partial.crdownload"
+    partial.write_text("a,b\n3,4\n")
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.get(f"/api/executions/{execution.id}")
+
+    body = resp.json()
+    assert body["outputs"]["file_path"] == str(partial)
+    assert body["outputs"]["download_files"] == ["partial.crdownload"]
