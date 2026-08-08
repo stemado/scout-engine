@@ -72,7 +72,8 @@ async def main(apply: bool) -> int:
             return 1
 
         src_rows = await src.fetch(
-            "SELECT id, name, description, schema_version, workflow_json, created_at "
+            "SELECT id, name, description, schema_version, workflow_json, created_at, "
+            "COALESCE(updated_at, created_at) AS updated_at "
             "FROM workflows"
         )
         have = {r["id"] for r in await dst.fetch("SELECT id FROM workflows")}
@@ -95,9 +96,10 @@ async def main(apply: bool) -> int:
         for r in to_copy:
             await dst.execute(
                 "INSERT INTO workflows (id, name, description, schema_version, "
-                "workflow_json, created_at) VALUES ($1, $2, $3, $4, $5, $6)",
+                "workflow_json, created_at, updated_at) "
+                "VALUES ($1, $2, $3, $4, $5, $6, $7)",
                 r["id"], r["name"], r["description"], r["schema_version"],
-                r["workflow_json"], r["created_at"],
+                r["workflow_json"], r["created_at"], r["updated_at"],
             )
         n = await dst.fetchval("SELECT count(*) FROM workflows")
         print(f"copied {len(to_copy)}; remote now has {n} workflows")
