@@ -27,7 +27,10 @@ class Settings(BaseSettings):
 
     # Directories
     download_dir: str = "./downloads"
-    screenshot_dir: str = "./screenshots"
+    # Empty disables per-step screenshot capture entirely (ruling 2026-08-08:
+    # CCM portal pages render employee PII, so captures are off by default and
+    # an operator must opt in explicitly via SCREENSHOT_DIR).
+    screenshot_dir: str = ""
 
     # Artifact retention (0 to disable cleanup)
     artifact_retention_days: int = 30
