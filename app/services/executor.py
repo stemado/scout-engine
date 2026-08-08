@@ -508,7 +508,11 @@ def _execute_step_sync(
                         output_data = step.destination
                     case "write":
                         os.makedirs(os.path.dirname(step.destination), exist_ok=True)
-                        with open(step.destination, "w", encoding="utf-8") as f:
+                        # newline="" disables newline translation: content that
+                        # already carries CRLF must land as CRLF, not CRCRLF.
+                        with open(
+                            step.destination, "w", encoding="utf-8", newline="",
+                        ) as f:
                             f.write(step.content or "")
                         output_data = step.destination
                     case "glob":

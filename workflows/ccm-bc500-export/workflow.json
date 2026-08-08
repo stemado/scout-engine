@@ -1,0 +1,257 @@
+{
+  "schema_version": "1.0",
+  "name": "ccm-bc500-export",
+  "description": "CCM bC500 employee export from benefitsCONNECT System Administration. Port of workflows/ccm/bc-census-export/benefitsconnect-employee-export.py (Otto session 973614649571). Logs in, selects the company, exports record type 500 for the configured date range, converts tab-delimited to CSV in-page, and writes the file to a deterministic path for acquisition.local-file pickup. outputs.file_path = the written CSV.",
+  "source": {
+    "tool": "claude-port",
+    "session_id": "benefitsconnect-employee-export.py"
+  },
+  "variables": {
+    "BC_USERNAME": {
+      "type": "credential",
+      "default": "vault:BC_USERNAME",
+      "description": "benefitsCONNECT system admin username (vault-resolved)"
+    },
+    "BC_PASSWORD": {
+      "type": "credential",
+      "default": "vault:BC_PASSWORD",
+      "description": "benefitsCONNECT system admin password (vault-resolved)"
+    },
+    "COMPANY_NAME": {
+      "type": "string",
+      "default": "Century Care Management",
+      "description": "Exact company name as shown in the bC company list"
+    },
+    "START_DATE": {
+      "type": "string",
+      "default": "2026-01-01",
+      "description": "Export range start, YYYY-MM-DD"
+    },
+    "END_DATE": {
+      "type": "string",
+      "default": "2026-12-31",
+      "description": "Export range end, YYYY-MM-DD"
+    },
+    "OUTPUT_DIR": {
+      "type": "string",
+      "default": "D:/CCM-Shadow/acquisition/ccm-bc500",
+      "description": "Directory the converted CSV is written into (acquisition seam root)"
+    },
+    "RUN_DATE": {
+      "type": "string",
+      "default": "manual",
+      "description": "Date stamp for the output filename, e.g. 2026-08-07"
+    }
+  },
+  "settings": {
+    "headless": false,
+    "human_mode": true,
+    "default_timeout_ms": 30000,
+    "step_delay_ms": 800,
+    "on_error": "stop"
+  },
+  "steps": [
+    {
+      "order": 1,
+      "name": "Warm up Chrome viewport",
+      "action": "navigate",
+      "value": "https://www.google.com"
+    },
+    {
+      "order": 2,
+      "name": "Open System Administration login in a new tab",
+      "action": "navigate_new_tab",
+      "value": "https://www.benefitsconnect.net/admin/"
+    },
+    {
+      "order": 3,
+      "name": "Wait for login form",
+      "action": "wait",
+      "selector": "input[name='Username']",
+      "timeout_ms": 10000
+    },
+    {
+      "order": 4,
+      "name": "Enter username",
+      "action": "type",
+      "selector": "input[name='Username']",
+      "value": "${BC_USERNAME}"
+    },
+    {
+      "order": 5,
+      "name": "Enter password",
+      "action": "fill_secret",
+      "selector": "input[name='Password']",
+      "value": "${BC_PASSWORD}"
+    },
+    {
+      "order": 6,
+      "name": "Click Login",
+      "action": "click",
+      "selector": "#DocContent > table > tbody > tr:nth-of-type(2) > td:nth-of-type(3) > div > a"
+    },
+    {
+      "order": 7,
+      "name": "Let the post-login page settle",
+      "action": "wait",
+      "value": "3000"
+    },
+    {
+      "order": 8,
+      "name": "Handle 'already logged in' interstitial if present",
+      "action": "run_js",
+      "value": "return (() => {\n  const body = document.body ? (document.body.innerText || '') : '';\n  const detected = body.indexOf('already logged in') !== -1 ||\n    body.indexOf('Already Logged In') !== -1 ||\n    body.indexOf('already logged on') !== -1;\n  if (!detected) { return 'no-interstitial'; }\n  const links = document.querySelectorAll('a');\n  for (let i = 0; i < links.length; i++) {\n    const text = links[i].textContent.toLowerCase();\n    if (text.indexOf('click here') !== -1 || text.indexOf('continue') !== -1 ||\n        text.indexOf('log in') !== -1 || text.indexOf('login') !== -1) {\n      links[i].click();\n      return 'forced-new-session';\n    }\n  }\n  throw new Error('already-logged-in page detected but no force-login link found');\n})();",
+      "output_var": "interstitial"
+    },
+    {
+      "order": 9,
+      "name": "Settle after possible forced login",
+      "action": "wait",
+      "value": "3000"
+    },
+    {
+      "order": 10,
+      "name": "Wait for admin menu",
+      "action": "wait",
+      "selector": "#DocContent > table > tbody > tr > td:nth-of-type(1) > a",
+      "timeout_ms": 15000
+    },
+    {
+      "order": 11,
+      "name": "Expand Company Management menu",
+      "action": "run_js",
+      "value": "document.querySelector('#DocContent > table > tbody > tr > td:nth-of-type(1) > a').click();"
+    },
+    {
+      "order": 12,
+      "name": "Click Edit Company",
+      "action": "click",
+      "selector": "#CompMgmtMenu > a:nth-of-type(2)"
+    },
+    {
+      "order": 13,
+      "name": "Wait for company list",
+      "action": "wait",
+      "value": "2000"
+    },
+    {
+      "order": 14,
+      "name": "Select company by exact name",
+      "action": "run_js",
+      "value": "return (() => {\n  const target = '${COMPANY_NAME}';\n  const links = document.querySelectorAll('#CompanyList a');\n  for (let i = 0; i < links.length; i++) {\n    if (links[i].textContent.trim() === target) { links[i].click(); return true; }\n  }\n  throw new Error('Company not found in list: ' + target);\n})();"
+    },
+    {
+      "order": 15,
+      "name": "Wait for company page",
+      "action": "wait",
+      "value": "2000"
+    },
+    {
+      "order": 16,
+      "name": "Wait for company admin menu",
+      "action": "wait",
+      "selector": "#DocContent > table > tbody > tr > td:nth-of-type(1) > a",
+      "timeout_ms": 15000
+    },
+    {
+      "order": 17,
+      "name": "Expand Company Administration menu",
+      "action": "run_js",
+      "value": "document.querySelector('#DocContent > table > tbody > tr > td:nth-of-type(1) > a').click();"
+    },
+    {
+      "order": 18,
+      "name": "Click Export Data",
+      "action": "click",
+      "selector": "#CompanyMenu > span > a:nth-of-type(17)"
+    },
+    {
+      "order": 19,
+      "name": "Wait for export form",
+      "action": "wait",
+      "value": "1500"
+    },
+    {
+      "order": 20,
+      "name": "Check record type 500 (Employee)",
+      "action": "click",
+      "selector": "#iRT500"
+    },
+    {
+      "order": 21,
+      "name": "Click Continue to selection criteria",
+      "action": "click",
+      "selector": "#DocContent > div:nth-of-type(2) > div > a:nth-of-type(1)"
+    },
+    {
+      "order": 22,
+      "name": "Wait for criteria form",
+      "action": "wait",
+      "value": "1500"
+    },
+    {
+      "order": 23,
+      "name": "Set export date span",
+      "action": "run_js",
+      "value": "return (() => {\n  const start = new Date('${START_DATE}' + 'T00:00:00');\n  const end = new Date('${END_DATE}' + 'T00:00:00');\n  if (isNaN(start.getTime()) || isNaN(end.getTime())) {\n    throw new Error('Invalid START_DATE or END_DATE');\n  }\n  const fields = [\n    ['StartMonth', String(start.getMonth() + 1)],\n    ['StartDay', String(start.getDate())],\n    ['StartYear', String(start.getFullYear())],\n    ['EndMonth', String(end.getMonth() + 1)],\n    ['EndDay', String(end.getDate())],\n    ['EndYear', String(end.getFullYear())]\n  ];\n  let applied = 0;\n  for (let i = 0; i < fields.length; i++) {\n    const el = document.querySelector('select[name=\"' + fields[i][0] + '\"]');\n    if (el) {\n      el.value = fields[i][1];\n      el.dispatchEvent(new Event('change'));\n      applied++;\n    }\n  }\n  if (applied === 0) { throw new Error('No date select fields found'); }\n  return applied;\n})();",
+      "output_var": "date_fields_applied"
+    },
+    {
+      "order": 24,
+      "name": "Pause before processing",
+      "action": "wait",
+      "value": "1000"
+    },
+    {
+      "order": 25,
+      "name": "Click Process to generate the export",
+      "action": "click",
+      "selector": "#DocContent > div:nth-of-type(2) > div > a:nth-of-type(1)"
+    },
+    {
+      "order": 26,
+      "name": "Wait for Download File link",
+      "action": "wait",
+      "selector": "a[href*='/DownloadFile']",
+      "timeout_ms": 90000
+    },
+    {
+      "order": 27,
+      "name": "Fetch export and convert tab-delimited to CSV in-page",
+      "action": "run_js",
+      "value": "return (async () => {\n  const link = document.querySelector(\"a[href*='/DownloadFile']\");\n  if (!link) { throw new Error('Download link not found'); }\n  const resp = await fetch(link.href, { credentials: 'include' });\n  if (!resp.ok) { throw new Error('Download failed: HTTP ' + resp.status); }\n  const raw = await resp.text();\n  if (!raw || !raw.trim()) { throw new Error('Download returned empty content'); }\n  const headerRow = 'Transaction Code,Division Name,First Name,Middle Initial,Last Name,Title,Social Security Number,Visa Number,Password,Date of Birth,Gender,Ethnic Code,Address,Address [continued],City,County,State,Postal Code,Country,Home Phone,Work Phone,Work Phone Ext.,Email,Alternative Email,Marital Status,Marital Date,Veteran Status,Date of Employment,Hours Worked Per Week,Annual Wages,Commission,Bonus,Reported Tips,Subject To Social Security,Subject To FUTA,Subject To Medicare,Subject To AEIC,Occupation,Job Description,Smoking Status,Supervisor ID,College1 Name,College1 Degree,College1 Year Graduated,College2 Name,College2 Degree,College2 Year Graduated,Emergency Contact1 First Name,Emergency Contact1 Last Name,Emergency Contact1 Address,Emergency Contact1 Apt,Emergency Contact1 City,Emergency Contact1 State,Emergency Contact1 Postal Code,Emergency Contact1 Home Phone,Emergency Contact1 Work Phone,Emergency Contact1 Work Phone Ext.,Emergency Contact1 Relationship,Emergency Contact1 Email,Emergency Contact2 First Name,Emergency Contact2 Last Name,Emergency Contact2 Address,Emergency Contact2 Apt,Emergency Contact2 City,Emergency Contact2 State,Emergency Contact2 Postal Code,Emergency Contact2 Home Phone,Emergency Contact2 Work Phone,Emergency Contact2 Work Phone Ext.,Emergency Contact2 Relationship,Emergency Contact2 Email,Doctors Name,Doctors Phone,Doctors Phone Ext.,Known Allergies,Payroll File Number,Final Payroll Date,Rate Type,Rate Per Hour,Time Off Remaining,Contribution Interval Override,Pay Frequency,Payroll Schedule Name,OT Multiplier,Federal Filing Status,Federal Exemptions,Federal Do Not Calculate,Federal Tax,Federal Allowances,Federal Withholding,Federal FUTA,Federal SSN Med Tax,Federal SSN,Federal Extra Tax Type,Federal Extra Tax Amount,State Worked In,State Lived In,State Filing Status,State Exemptions,State FUTA,State Do Not Calculate,State Tax,State SUI SDI Tax,State SUI SDI Taxable,State Extra Tax Type,State Extra Tax Amount,Subject To SUI,State Allowances,State Withholding,Local Tax Withholding,Direct Deposit,Routing Number,Account Number,Account Type,Bank Name,Bank Phone,Bank Sub Account ID,Employee Status,Login Status,Employee Category,Employee Type,Officer,Percent Stock Holdings,Union Member,Disabled,Disabled Reason,Disabled Date,Utilize Medicare,Medicare Date,Medicare Part A Date,Medicare Part B Date,Medicare Termination Date,Utilize Medicaid,Medicaid Effective Date,Medicaid Termination Date,Other Pregnant Person,Other Pregnant Date,Other Complications,Show Disclaimer,Medical Clinic Code,Dental Clinic Code,Vision Clinic Code,Drug Clinic Code,Personal Description,Receive Emails,Utilize Debit Card,Debit Card Status,Card Number,Reissue Card,Date Verified,Date Activated in System,Date COBRA,Date COBRA Notice Sent,Date Retired,Date FMLA,Date Terminated,Date Rehired,Date Deceased,Date Inactive,Date System Access Expires,Effective Date of Data Change,Effective Date of Enrollment Changes Caused by Data Change';\n  const quote = function (f) {\n    if (f.indexOf(',') === -1 && f.indexOf('\"') === -1 &&\n        f.indexOf('\\n') === -1 && f.indexOf('\\r') === -1) { return f; }\n    return '\"' + f.split('\"').join('\"\"') + '\"';\n  };\n  const lines = raw.trim().split('\\n');\n  const rows = [];\n  for (let i = 0; i < lines.length; i++) {\n    let line = lines[i];\n    if (line.charAt(line.length - 1) === '\\r') { line = line.slice(0, -1); }\n    if (!line) { continue; }\n    const fields = line.split('\\t');\n    const out = [];\n    for (let j = 0; j < fields.length; j++) {\n      out.push(quote(fields[j] === '~' ? '' : fields[j]));\n    }\n    rows.push(out.join(','));\n  }\n  if (rows.length === 0) { throw new Error('Export contained no data rows'); }\n  return headerRow + '\\r\\n' + rows.join('\\r\\n') + '\\r\\n';\n})();",
+      "output_var": "csv_content",
+      "timeout_ms": 60000
+    },
+    {
+      "order": 28,
+      "name": "Write CSV to acquisition seam path",
+      "action": "file_op",
+      "operation": "write",
+      "destination": "${OUTPUT_DIR}/BC500_${RUN_DATE}.csv",
+      "content": "${csv_content}",
+      "output_var": "file_path"
+    },
+    {
+      "order": 29,
+      "name": "Clear csv_content from outputs (PII hygiene)",
+      "action": "run_js",
+      "value": "return 'cleared';",
+      "output_var": "csv_content"
+    }
+  ],
+  "cleanup_steps": [
+    {
+      "order": 1,
+      "name": "Log out so bC releases the server-side session",
+      "action": "navigate",
+      "value": "https://www.benefitsconnect.net/Logout.cfm"
+    },
+    {
+      "order": 2,
+      "name": "Let logout complete",
+      "action": "wait",
+      "value": "2000"
+    }
+  ]
+}
