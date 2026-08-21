@@ -26,7 +26,7 @@ async def _serve() -> None:
     config = Config(
         "app.main:app",
         host=os.environ.get("HOST", "127.0.0.1"),
-        port=int(os.environ.get("PORT", "8000")),
+        port=int(os.environ.get("PORT", "8200")),
         loop="none",  # use the loop asyncio.run created under our Selector policy
     )
     await Server(config).serve()
